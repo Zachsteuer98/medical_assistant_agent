@@ -41,3 +41,7 @@ def test_no_retrieved_chunks_skips_llm():
 
 def test_cited_pages_parses_spacing_variants():
     assert cited_pages("[Source Page: 3] and [Source Page:12]") == {3, 12}
+
+
+def test_cited_pages_parses_multi_page_markers():
+    assert cited_pages("[Source Pages: 174, 175]") == {174, 175}

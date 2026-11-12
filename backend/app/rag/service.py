@@ -9,11 +9,11 @@ from app.rag.store import Chunk, Retriever
 from app.schemas import AskResponse, Citation
 
 SNIPPET_CHARS = 300
-_CITED_PAGE = re.compile(r"\[Source Page:\s*(\d+)\]")
+_CITED_PAGES = re.compile(r"\[Source Pages?:\s*([\d,\s]+)\]")
 
 
 def cited_pages(answer: str) -> set[int]:
-    return {int(p) for p in _CITED_PAGE.findall(answer)}
+    return {int(p) for group in _CITED_PAGES.findall(answer) for p in group.split(",") if p.strip()}
 
 
 class AssistantService:

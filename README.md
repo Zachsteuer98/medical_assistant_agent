@@ -11,11 +11,51 @@ questions from trusted reference manuals and cites the exact source page for eve
 🚧 In progress. Roadmap:
 
 - [x] Prototype notebook (`notebooks/medical_assistant_rag.ipynb`)
-- [ ] Backend: FastAPI RAG service with citations
-- [ ] Evaluation harness: baseline vs. prompt-engineered vs. RAG, LLM-as-judge
-- [ ] Frontend: React chat UI with citation panel
+- [x] Backend: FastAPI RAG service with page-level citations
+- [x] Evaluation harness: RAG-triad LLM-as-judge ([chunk-size results](eval/summary_chunk_size.md))
+- [x] Frontend: React chat UI with citation panel
 - [ ] Tests, Docker, CI
 - [ ] Live demo (public-domain corpus)
+
+## Architecture
+
+```
+React (Vite, TS) ──/api/ask──▶ FastAPI ──▶ Chroma (MiniLM embeddings, MMR)
+   citation chips  ◀── answer + citations ──┘      └──▶ gpt-4o-mini (temp 0)
+```
+
+Key decisions are recorded in [`docs/adr/`](docs/adr/).
+
+## Run locally
+
+Prerequisites: Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22, an OpenAI API key,
+and a corpus PDF at `data/raw/merck.pdf` (not included — see below).
+
+```bash
+cp .env.example .env                       # add OPENAI_API_KEY
+
+cd backend
+uv sync --all-groups
+uv run python -m app.ingest --corpus merck # build the vector index (~15-20 min on CPU)
+uv run uvicorn app.main:create_app --factory --port 8000
+
+cd ../frontend                             # in a second terminal
+npm install
+npm run dev                                # http://localhost:5173
+```
+
+## Test
+
+```bash
+cd backend  && uv run pytest && uv run ruff check .
+cd frontend && npm test && npm run lint && npm run build
+```
+
+## Evaluate
+
+```bash
+cd backend && uv run python -m evaluation.run --experiment chunk_size   # ~$1-2 API cost
+```
 
 ## Data & licensing
 
