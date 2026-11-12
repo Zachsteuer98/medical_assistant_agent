@@ -1,0 +1,32 @@
+# Secrets
+.env
+.env.*
+!.env.example
+config.json
+
+# Licensed / derived corpus data — NEVER commit (see docs/adr/0001)
+data/
+*.pdf
+chroma/
+medical_db/
+*.sqlite3
+
+# Eval artifacts that may embed licensed text
+eval/results/*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
