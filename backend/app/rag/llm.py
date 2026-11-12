@@ -8,7 +8,9 @@ MAX_RETRIES = 3  # SDK retries with exponential backoff on 429/5xx/timeouts
 
 
 class ChatModel(Protocol):
-    def complete(self, system: str, user: str) -> str: ...
+    def complete(self, system: str, user: str) -> str:
+        """An empty system prompt sends only the user message."""
+        ...
 
 
 class LLMError(RuntimeError):
@@ -36,12 +38,11 @@ class OpenAIChatModel:
 
     def complete(self, system: str, user: str) -> str:
         try:
+            messages = [{"role": "system", "content": system}] if system else []
+            messages.append({"role": "user", "content": user})
             completion = self._client.chat.completions.create(
                 model=self._model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+                messages=messages,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
             )
