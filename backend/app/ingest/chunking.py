@@ -8,8 +8,8 @@ import tiktoken
 
 TokenCounter = Callable[[str], int]
 SEPARATORS = ("\n\n", "\n", ". ", " ")
-DEFAULT_CHUNK_TOKENS = 1000
-DEFAULT_OVERLAP_TOKENS = 200
+DEFAULT_CHUNK_TOKENS = 200  # fits MiniLM's 256-wordpiece window; see ADR 0003
+DEFAULT_OVERLAP_TOKENS = 40
 
 
 @lru_cache

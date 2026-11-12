@@ -43,9 +43,9 @@ class RunConfig:
 
 EXPERIMENTS: dict[str, tuple[RunConfig, ...]] = {
     "chunk_size": (
-        RunConfig("1000-token chunks, k=5 (notebook baseline)", "merck", 1000, 5),
-        RunConfig("200-token chunks, k=5", "merck_c200", 200, 5),
-        RunConfig("200-token chunks, k=25 (equal context budget)", "merck_c200", 200, 25),
+        RunConfig("1000-token chunks, k=5 (notebook baseline)", "merck_c1000", 1000, 5),
+        RunConfig("200-token chunks, k=5", "merck", 200, 5),
+        RunConfig("200-token chunks, k=25 (equal context budget)", "merck", 200, 25),
     ),
 }
 
