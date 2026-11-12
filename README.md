@@ -19,6 +19,10 @@ questions from trusted reference manuals and cites the exact source page for eve
 - [x] Tests, Docker, CI (privacy guard, lint, tests, image builds on every push)
 - [ ] Live demo (public-domain corpus)
 
+## Business findings
+
+📊 [Findings deck (PowerPoint)](deck/Medical_Assistant_Agent_Findings.pptx): problem, solution, evaluation results, risks and recommendations. Rebuild it from the eval summaries with `cd deck && npm install && npm run build`.
+
 ## Architecture
 
 ```

@@ -1,0 +1,15 @@
+{
+  "name": "medical-assistant-deck",
+  "private": true,
+  "description": "Generates the business findings deck from eval results",
+  "scripts": {
+    "build": "NODE_PATH=./node_modules node build_deck.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "3.12.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "react-icons": "5.4.0",
+    "sharp": "0.33.5"
+  }
+}
