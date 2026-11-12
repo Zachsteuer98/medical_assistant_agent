@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  privacy:
+    name: Privacy & licensing guard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Block corpus data, secrets and env files
+        run: |
+          set -euo pipefail
+          forbidden=$(git ls-files | grep -E '\.pdf$|(^|/)\.env$|(^|/)chroma/|\.sqlite3?$|^eval/results/.*\.csv$|(^|/)config\.json$' || true)
+          if [ -n "$forbidden" ]; then echo "::error::Forbidden files tracked:"; echo "$forbidden"; exit 1; fi
+          if git grep -nIE 'sk-[A-Za-z0-9_-]{20,}' -- . ':!*.lock' ':!*package-lock.json'; then
+            echo "::error::Possible API key committed"; exit 1
+          fi
+      - name: Notebook outputs must be cleared (may contain licensed text)
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          bad = [str(p) for p in pathlib.Path(".").rglob("*.ipynb")
+                 if any(c.get("outputs") for c in json.loads(p.read_text())["cells"])]
+          if bad:
+              print("::error::Notebooks with outputs:", *bad); sys.exit(1)
+          PY
+
+  backend:
+    name: Backend (lint + tests)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          enable-cache: true
+      - run: uv sync --frozen --all-groups
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pytest -q
+
+  frontend:
+    name: Frontend (lint + typecheck + tests + build)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npm audit --omit=dev --audit-level=high
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-24.04
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+      - name: Validate compose file
+        run: touch .env && docker compose config --quiet

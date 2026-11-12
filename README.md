@@ -1,5 +1,7 @@
 # Medical Assistant Agent
 
+[![CI](https://github.com/Zachsteuer98/medical_assistant_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/Zachsteuer98/medical_assistant_agent/actions/workflows/ci.yml)
+
 A retrieval-augmented (RAG) clinical decision-support assistant that answers medical
 questions from trusted reference manuals and cites the exact source page for every claim.
 
@@ -14,7 +16,7 @@ questions from trusted reference manuals and cites the exact source page for eve
 - [x] Backend: FastAPI RAG service with page-level citations
 - [x] Evaluation harness: RAG-triad LLM-as-judge ([chunk-size results](eval/summary_chunk_size.md))
 - [x] Frontend: React chat UI with citation panel
-- [ ] Tests, Docker, CI
+- [x] Tests, Docker, CI (privacy guard, lint, tests, image builds on every push)
 - [ ] Live demo (public-domain corpus)
 
 ## Architecture
@@ -42,6 +44,12 @@ uv run uvicorn app.main:create_app --factory --port 8000
 cd ../frontend                             # in a second terminal
 npm install
 npm run dev                                # http://localhost:5173
+```
+
+### Or with Docker
+
+```bash
+docker compose up --build                  # http://localhost:8080 (index must already exist in data/chroma)
 ```
 
 ## Test
