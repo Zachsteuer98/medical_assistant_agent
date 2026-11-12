@@ -14,10 +14,12 @@ questions from trusted reference manuals and cites the exact source page for eve
 
 - [x] Prototype notebook (`notebooks/medical_assistant_rag.ipynb`)
 - [x] Backend: FastAPI RAG service with page-level citations
-- [x] Evaluation harness: RAG-triad LLM-as-judge ([chunk-size results](eval/summary_chunk_size.md))
+- [x] Evaluation harness: RAG-triad LLM-as-judge ([approach comparison](eval/summary_approach.md), [chunk-size results](eval/summary_chunk_size.md))
 - [x] Frontend: React chat UI with citation panel
 - [x] Tests, Docker, CI (privacy guard, lint, tests, image builds on every push)
-- [ ] Live demo (public-domain corpus)
+- [x] Business findings deck ([PowerPoint](deck/Medical_Assistant_Agent_Findings.pptx))
+- [ ] Demo GIF and screenshots in this README
+- [ ] Deployment; decide whether a public-domain corpus powers the live demo ([ADR 0001](docs/adr/0001-corpus-licensing.md))
 
 ## Business findings
 
