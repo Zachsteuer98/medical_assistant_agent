@@ -1,9 +1,12 @@
 """Chroma-backed vector store: index building (ingest) and MMR retrieval (serving)."""
 
+import logging
+import shutil
+import sqlite3
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import chromadb
 import numpy as np
@@ -13,6 +16,8 @@ from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 from app.rag.mmr import mmr_select
 
 ADD_BATCH_SIZE = 256
+CHROMA_DB_FILE = "chroma.sqlite3"
+log = logging.getLogger("store")
 
 
 class IndexNotReadyError(RuntimeError):
@@ -48,14 +53,46 @@ def _client(chroma_dir: Path) -> chromadb.ClientAPI:
     )
 
 
-def build_index(chroma_dir: Path, collection: str, chunks: Sequence[Chunk]) -> int:
+def _segment_ids(chroma_dir: Path, collection_id: str) -> list[str]:
+    """Segment ids of one collection, read from Chroma's catalog (schema of chromadb 1.5.x)."""
+    db = sqlite3.connect(f"file:{chroma_dir / CHROMA_DB_FILE}?mode=ro", uri=True)
+    try:
+        rows = db.execute("SELECT id FROM segments WHERE collection = ?", (collection_id,))
+        return [str(row[0]) for row in rows]
+    finally:
+        db.close()
+
+
+def _delete_collection(client: chromadb.ClientAPI, chroma_dir: Path, name: str) -> None:
+    """Delete a collection and its on-disk vector segment directories.
+
+    Chroma's delete_collection leaves the HNSW directory behind, so every re-ingest leaked one
+    (~10 MB for the public corpus). Only directories of *this* collection, looked up before the
+    delete, are removed, so other collections sharing the store are never touched.
+    """
+    collection_id = str(client.get_collection(name).id)
+    segment_dirs = [chroma_dir / sid for sid in _segment_ids(chroma_dir, collection_id)]
+    client.delete_collection(name)
+    for directory in segment_dirs:
+        if directory.is_dir():
+            shutil.rmtree(directory)
+            log.info("removed stale segment dir=%s", directory.name)
+
+
+def build_index(
+    chroma_dir: Path,
+    collection: str,
+    chunks: Sequence[Chunk],
+    embedding_function: Any = None,
+) -> int:
     """(Re)create the collection from scratch so re-ingesting is idempotent."""
     client = _client(chroma_dir)
     if collection in [c.name for c in client.list_collections()]:
-        client.delete_collection(collection)
+        _delete_collection(client, chroma_dir, collection)
     col = client.create_collection(
         collection,
-        embedding_function=DefaultEmbeddingFunction(),  # all-MiniLM-L6-v2 (ONNX), 384-d
+        # Default: all-MiniLM-L6-v2 (ONNX), 384-d. Tests inject a tiny deterministic one.
+        embedding_function=embedding_function or DefaultEmbeddingFunction(),
         configuration={"hnsw": {"space": "cosine"}},
     )
     for start in range(0, len(chunks), ADD_BATCH_SIZE):
