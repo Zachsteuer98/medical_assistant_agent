@@ -1,12 +1,14 @@
-import { useState, type FormEvent, type KeyboardEvent } from "react";
+import { useState, type FormEvent, type KeyboardEvent, type RefObject } from "react";
 import { QUESTION_MAX_CHARS, QUESTION_MIN_CHARS } from "../api/types";
 
 interface Props {
   busy: boolean;
   onSubmit: (question: string) => void;
+  placeholder: string;
+  inputRef?: RefObject<HTMLTextAreaElement>;
 }
 
-export function Composer({ busy, onSubmit }: Props) {
+export function Composer({ busy, onSubmit, placeholder, inputRef }: Props) {
   const [text, setText] = useState("");
   const canSend = !busy && text.trim().length >= QUESTION_MIN_CHARS;
 
@@ -28,12 +30,13 @@ export function Composer({ busy, onSubmit }: Props) {
       </label>
       <textarea
         id="question"
+        ref={inputRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}
         maxLength={QUESTION_MAX_CHARS}
         rows={2}
-        placeholder="Ask a clinical question, e.g. first-line treatment for rheumatoid arthritis"
+        placeholder={placeholder}
         aria-describedby="question-hint"
       />
       <div className="composer-row">

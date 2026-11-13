@@ -1,19 +1,20 @@
 import { useEffect, useRef } from "react";
 import type { Citation } from "../api/types";
-import { groupByPage } from "../citations";
+import { groupBySource } from "../citations";
 
 interface Props {
   citations: Citation[] | null;
-  activePage: number | null;
+  /** sourceKey of the card selected via a citation chip. */
+  activeKey: string | null;
 }
 
-export function SourcesPanel({ citations, activePage }: Props) {
+export function SourcesPanel({ citations, activeKey }: Props) {
   const activeRef = useRef<HTMLLIElement>(null);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
     activeRef.current?.focus();
-  }, [activePage]);
+  }, [activeKey]);
 
   return (
     <aside className="sources" aria-labelledby="sources-heading">
@@ -24,11 +25,11 @@ export function SourcesPanel({ citations, activePage }: Props) {
         <p className="muted">No passages were retrieved for this question.</p>
       ) : (
         <ul className="source-list">
-          {groupByPage(citations).map((group) => {
-            const active = group.page === activePage;
+          {groupBySource(citations).map((group) => {
+            const active = group.key === activeKey;
             return (
               <li
-                key={group.page}
+                key={group.key}
                 ref={active ? activeRef : undefined}
                 tabIndex={-1}
                 className={`source-card${active ? " active" : ""}`}
@@ -38,7 +39,7 @@ export function SourcesPanel({ citations, activePage }: Props) {
                   <span className="source-page">Page {group.page}</span>
                   {group.cited && <span className="badge">Cited</span>}
                 </div>
-                <p className="source-name">{group.source}</p>
+                <p className="source-name">{group.document}</p>
                 {group.snippets.map((snippet, i) => (
                   <blockquote key={i}>{snippet}…</blockquote>
                 ))}

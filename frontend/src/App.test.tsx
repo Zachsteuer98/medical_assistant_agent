@@ -3,12 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { AskResponse } from "./api/types";
+import { PUBLIC_TOPICS } from "./corpusGuides";
+
+const MERCK_NAME = "The Merck Manual of Diagnosis & Therapy, 19th ed.";
+const merck = { source: MERCK_NAME, document: MERCK_NAME, citation_label: MERCK_NAME };
 
 const ANSWER: AskResponse = {
   answer: "### Treatment\n- Anticoagulants [Source Page: 2595].",
   citations: [
-    { source: "Merck Manual", page: 2595, snippet: "Anticoagulation is the mainstay", cited: true },
-    { source: "Merck Manual", page: 2017, snippet: "Unrelated passage", cited: false },
+    { ...merck, page: 2595, snippet: "Anticoagulation is the mainstay", cited: true },
+    { ...merck, page: 2017, snippet: "Unrelated passage", cited: false },
   ],
   corpus: "merck",
   answered_from_context: true,
@@ -19,10 +23,10 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function mockApi(askResponses: Response[]) {
+function mockApi(askResponses: Response[], corpus = "merck") {
   const fetchMock = vi.fn<typeof fetch>((input) => {
     if (String(input).endsWith("/api/health")) {
-      return Promise.resolve(jsonResponse({ status: "ok", corpus: "merck", indexed_chunks: 1 }));
+      return Promise.resolve(jsonResponse({ status: "ok", corpus, indexed_chunks: 1 }));
     }
     const next = askResponses.shift();
     return next ? Promise.resolve(next) : Promise.reject(new TypeError("network"));
@@ -34,10 +38,10 @@ function mockApi(askResponses: Response[]) {
 describe("App", () => {
   beforeEach(() => vi.unstubAllGlobals());
 
-  it("shows example questions in the empty state", () => {
+  it("shows Merck example questions in the empty state", async () => {
     mockApi([]);
     render(<App />);
-    expect(screen.getByRole("heading", { name: /ask the medical manual/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /ask the medical manual/i })).toBeInTheDocument();
     expect(within(screen.getByRole("list", { name: /example questions/i })).getAllByRole("button")).toHaveLength(4);
   });
 
@@ -66,7 +70,7 @@ describe("App", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(screen.getAllByRole("button", { name: /pulmonary embolism/i })[0]!);
+    await user.click(await screen.findByRole("button", { name: /pulmonary embolism/i }));
     expect(await screen.findByText(/language model is temporarily unavailable/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /retry/i }));
@@ -81,6 +85,14 @@ describe("App", () => {
     expect(await screen.findByText(/not found in the manual/i)).toBeInTheDocument();
   });
 
+  it("keeps the disclaimer and shows a neutral empty state while the corpus is loading", () => {
+    mockApi([]);
+    render(<App />);
+    expect(screen.getByRole("note")).toHaveTextContent(/not medical advice/i);
+    expect(screen.getByText(/loading available topics/i)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /example questions/i })).not.toBeInTheDocument();
+  });
+
   it("disables sending for blank input", () => {
     mockApi([]);
     render(<App />);
@@ -91,5 +103,72 @@ describe("App", () => {
     vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("network"))));
     render(<App />);
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/unreachable/i));
+  });
+
+  describe("public corpus", () => {
+    const DM = "VA/DoD Clinical Practice Guideline for the Management of Type 2 Diabetes Mellitus (2023)";
+    const HTN = "VA/DoD Clinical Practice Guideline for Diagnosis and Treatment of Hypertension in Primary Care (2026)";
+    const source = "VA/DoD Clinical Practice Guidelines";
+    const PUBLIC_ANSWER: AskResponse = {
+      answer: "- Target BP <130/80 [Source: Hypertension CPG 2026, Pages: 12, 20].",
+      citations: [
+        { source, document: DM, citation_label: "Type 2 Diabetes CPG 2023", page: 12, snippet: "Diabetes page 12", cited: false },
+        { source, document: HTN, citation_label: "Hypertension CPG 2026", page: 12, snippet: "BP target text", cited: true },
+        { source, document: HTN, citation_label: "Hypertension CPG 2026", page: 20, snippet: "More BP text", cited: true },
+      ],
+      corpus: "public",
+      answered_from_context: true,
+      disclaimer: "Not medical advice.",
+    };
+
+    it("lists covered topics, example questions and the scope note", async () => {
+      mockApi([], "public");
+      render(<App />);
+      expect(await screen.findByRole("heading", { name: /ask the va\/dod guidelines/i })).toBeInTheDocument();
+      const topics = within(screen.getByRole("list", { name: /covered topics/i })).getAllByRole("listitem");
+      expect(topics.map((t) => t.textContent)).toEqual(PUBLIC_TOPICS);
+      const examples = within(screen.getByRole("list", { name: /example questions/i })).getAllByRole("button");
+      expect(examples.length).toBeGreaterThanOrEqual(4);
+      expect(examples.length).toBeLessThanOrEqual(6);
+      expect(screen.getByText(/answers come only from these 10 va\/dod/i)).toBeInTheDocument();
+      expect(screen.getByRole("note")).toHaveTextContent(/not medical advice/i);
+    });
+
+    it("submits an example question and links chips to the matching (document, page) card", async () => {
+      const fetchMock = mockApi([jsonResponse(PUBLIC_ANSWER)], "public");
+      const user = userEvent.setup();
+      render(<App />);
+
+      const example = await screen.findByRole("button", { name: /blood pressure target/i });
+      await user.click(example);
+
+      const askCall = fetchMock.mock.calls.find(([url]) => String(url).endsWith("/api/ask"));
+      expect(JSON.parse(String(askCall?.[1]?.body))).toEqual({
+        question: "What blood pressure target is recommended for adults with hypertension?",
+      });
+      expect(screen.getByLabelText(/ask a clinical question/i)).toHaveFocus();
+
+      const chip = await screen.findByRole("button", { name: "Show source Hypertension CPG 2026, page 12" });
+      expect(chip).toHaveTextContent("Hypertension CPG 2026, p. 12");
+      expect(screen.getByRole("button", { name: "Show source Hypertension CPG 2026, page 20" })).toHaveTextContent("p. 20");
+
+      const sources = screen.getByRole("complementary", { name: /sources/i });
+      expect(within(sources).getAllByText("Page 12")).toHaveLength(2);
+
+      chip.focus();
+      await user.keyboard("{Enter}");
+      const active = within(sources).getByText(HTN, { selector: ".source-card[aria-current] *" });
+      expect(active.closest("li")).toHaveTextContent("BP target text");
+      expect(active.closest("li")).toHaveFocus();
+      expect(within(sources).getByText(DM).closest("li")).not.toHaveAttribute("aria-current");
+    });
+
+    it("uses guideline wording when the answer is not in the sources", async () => {
+      mockApi([jsonResponse({ ...PUBLIC_ANSWER, answered_from_context: false, citations: [] })], "public");
+      const user = userEvent.setup();
+      render(<App />);
+      await user.type(screen.getByLabelText(/ask a clinical question/i), "COVID vaccine dosing?{Enter}");
+      expect(await screen.findByText(/not found in the guidelines/i)).toBeInTheDocument();
+    });
   });
 });
