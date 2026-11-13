@@ -10,7 +10,12 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/diabetes/VADOD-Diabetes-CPG_Final_508.pdf",
       "sha256": "cc5f24ac1b38560d00a2e85e5361d4f741ea2b7be9f7df354c6104b385836a5d",
       "pages": 165,
-      "first_content_page": 4
+      "first_content_page": 4,
+      "excluded_pages": [
+        [77, 96],
+        [107, 144],
+        [147, 165]
+      ]
     },
     {
       "id": "hypertension",
@@ -20,7 +25,11 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/htn/HTN-CPG_2026-Guideline_final_20261027.pdf",
       "sha256": "a19db25aebde16eb54c1784174633a9a915084e6eaf078c056a32d0726ceb56a",
       "pages": 123,
-      "first_content_page": 4
+      "first_content_page": 4,
+      "excluded_pages": [
+        [60, 98],
+        [112, 123]
+      ]
     },
     {
       "id": "lipids",
@@ -30,7 +39,11 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/lipids/Lipids-CPG_2025-Guideline_final_20260106.pdf",
       "sha256": "2cf05fab73dd52241d51624440597248d0fecc0d471a81eba02945f6bf0c585c",
       "pages": 157,
-      "first_content_page": 5
+      "first_content_page": 5,
+      "excluded_pages": [
+        [65, 124],
+        [140, 157]
+      ]
     },
     {
       "id": "asthma",
@@ -40,7 +53,12 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/asthma/Asthma-CPG_2025-Guideline_final_20250528.pdf",
       "sha256": "f1f12280bf08350383dc7b3ff0b5cb08f8acc37a43f30339d064eaeb3d57d89a",
       "pages": 149,
-      "first_content_page": 5
+      "first_content_page": 5,
+      "excluded_pages": [
+        [63, 83],
+        [114, 122],
+        [126, 149]
+      ]
     },
     {
       "id": "copd",
@@ -50,7 +68,11 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/copd/COPD-CPG_2026-CPG_final_20261007.pdf",
       "sha256": "6669b15b6c0e6bac141295e32a9c4aac50d8c32640730d1fc09700905091c8a7",
       "pages": 155,
-      "first_content_page": 4
+      "first_content_page": 4,
+      "excluded_pages": [
+        [58, 119],
+        [143, 155]
+      ]
     },
     {
       "id": "ckd",
@@ -60,7 +82,11 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/ckd/CKD-CPG_2025-Guideline_final_20250509.pdf",
       "sha256": "912be6f0e9c9b39ea53ca81c01a8042244111032e79ee9d3122c4a2c5f2340cf",
       "pages": 198,
-      "first_content_page": 5
+      "first_content_page": 5,
+      "excluded_pages": [
+        [77, 119],
+        [169, 198]
+      ]
     },
     {
       "id": "mdd",
@@ -70,7 +96,12 @@
       "url_path": "/HEALTHQUALITY/guidelines/MH/mdd/VADODMDDCPGFinal508.pdf",
       "sha256": "543033b6ddbd284d9d6c7695757e754207906b6bf6b3fe8a7de73ecb0270679d",
       "pages": 159,
-      "first_content_page": 5
+      "first_content_page": 5,
+      "excluded_pages": [
+        [72, 121],
+        [125, 126],
+        [144, 159]
+      ]
     },
     {
       "id": "low-back-pain",
@@ -80,7 +111,12 @@
       "url_path": "/HEALTHQUALITY/guidelines/Pain/lbp/VADODLBPCPGFinal508.pdf",
       "sha256": "8a7ea79572a877d5cf4677bd529c0d69a9c456850f1d3dcb7e64c3247938804b",
       "pages": 141,
-      "first_content_page": 4
+      "first_content_page": 4,
+      "excluded_pages": [
+        [77, 103],
+        [107, 118],
+        [122, 141]
+      ]
     },
     {
       "id": "headache",
@@ -90,7 +126,13 @@
       "url_path": "/HEALTHQUALITY/guidelines/pain/headache/VA-DOD-CPG-Headache-Full-CPG.pdf",
       "sha256": "6fedbad46306234e8cae9f47e2671426fdbc2d39c71b1a177306f6d5af189ae7",
       "pages": 255,
-      "first_content_page": 5
+      "first_content_page": 5,
+      "excluded_pages": [
+        [142, 160],
+        [175, 189],
+        [199, 216],
+        [219, 255]
+      ]
     },
     {
       "id": "insomnia-osa",
@@ -100,7 +142,13 @@
       "url_path": "/HEALTHQUALITY/guidelines/CD/insomnia/I-OSA-CPG_2025-Guideline_final_20250915.pdf",
       "sha256": "6eae309ec81fc8297c70863a9b1035de75faecfe6ca9b8b8e27681faec61f4d2",
       "pages": 182,
-      "first_content_page": 6
+      "first_content_page": 6,
+      "excluded_pages": [
+        [97, 130],
+        [140, 160],
+        [166, 182]
+      ]
     }
-  ]
+  ],
+  "excluded_pages_policy": "excluded_pages: 1-based inclusive physical page ranges (= printed 'Page N of M') skipped at ingest. Excluded: guideline development methodology, evidence tables, prior-version recommendation categorization tables, participant lists, patient focus group methods, literature search strategies, abbreviation lists and references. Kept: algorithms and their text descriptions, pharmacotherapy/dosing tables, clinical tools and other clinical appendices."
 }

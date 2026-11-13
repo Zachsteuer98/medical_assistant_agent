@@ -110,3 +110,40 @@ def test_merck_keeps_its_store_and_public_gets_a_separate_one():
     assert get_corpus("merck").chroma_dir(None) == REPO_ROOT / "data" / "chroma"
     assert get_corpus("public").chroma_dir(None) == REPO_ROOT / "data" / "chroma_public"
     assert get_corpus("public").chroma_dir(Path("/data/chroma")) == Path("/data/chroma")
+
+
+def test_merck_has_no_excluded_pages():
+    """Regression: page exclusions are opt-in; Merck's chunking must not change."""
+    (doc,) = get_corpus("merck").documents
+    assert doc.excluded_pages == ()
+    assert not doc.is_content_page(52) and doc.is_content_page(53)
+    assert doc.is_content_page(3000)
+
+
+def test_is_content_page_respects_front_matter_and_inclusive_ranges():
+    doc = CorpusDocument("A", Path("a.pdf"), 4, excluded_pages=((60, 98), (112, 123)))
+    assert [doc.is_content_page(p) for p in (4, 5, 59, 60, 98, 99, 111, 112, 123)] == [
+        False, True, True, False, False, True, True, False, False,
+    ]
+
+
+@pytest.mark.parametrize(
+    "ranges",
+    [((10, 5),), ((5, 10), (8, 12)), ((20, 30), (5, 10)), ((3, 10),), ((90, 101),)],
+    ids=["reversed", "overlapping", "unsorted", "inside-front-matter", "past-last-page"],
+)
+def test_invalid_excluded_ranges_are_rejected(ranges):
+    with pytest.raises(ValueError):
+        CorpusDocument("A", Path("a.pdf"), 4, expected_pages=100, excluded_pages=ranges)
+
+
+def test_public_manifest_excludes_references_and_keeps_recommendations():
+    docs = {d.citation_label: d for d in get_corpus("public").documents}
+    htn = docs["Hypertension CPG 2026"]
+    # Verified against the PDF: recommendations p.26-57 kept; Appendix A-F (methodology,
+    # evidence table, categorization, participants, focus group, search strategy) p.60-98,
+    # abbreviations and references p.112-123 excluded; dosing table p.102 kept.
+    assert htn.excluded_pages == ((60, 98), (112, 123))
+    assert all(htn.is_content_page(p) for p in (26, 36, 57, 99, 102, 107))
+    for doc in docs.values():  # every guideline ends with excluded references
+        assert doc.excluded_pages and doc.excluded_pages[-1][1] == doc.expected_pages

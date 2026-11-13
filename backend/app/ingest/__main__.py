@@ -61,6 +61,8 @@ def _document_chunks(
                 f"{document.expected_pages}; re-download it or update the manifest"
             )
         for index in range(document.first_content_page, doc.page_count):
+            if not document.is_content_page(index + 1):
+                continue
             text = clean_page_text(doc[index].get_text(), noise)
             chunks.extend(
                 # Page = 1-based physical PDF page, what a PDF viewer shows (see app.corpora).

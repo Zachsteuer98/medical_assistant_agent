@@ -73,3 +73,19 @@ def test_chunk_metadata_round_trips_source_and_page():
 def test_legacy_metadata_without_source_still_loads():
     """Regression: the existing Merck index stores only {"page": N}."""
     assert chunk_from_record("text", {"page": 175}) == Chunk("text", 175, "")
+
+
+def test_excluded_page_ranges_are_skipped_inclusive_1_based(tmp_path: Path):
+    pdf = make_pdf(tmp_path / "a.pdf", ["cover", page(2), page(3), page(4), page(5), page(6)])
+    spec = corpus(CorpusDocument("A", pdf, 1, excluded_pages=((3, 4), (6, 6))))
+    assert [c.page for c in load_corpus_chunks(spec)] == [2, 5]
+
+
+def test_exclusions_apply_per_document(tmp_path: Path):
+    a = make_pdf(tmp_path / "a.pdf", [page(1), page(2)])
+    b = make_pdf(tmp_path / "b.pdf", [page(1), page(2)])
+    spec = corpus(
+        CorpusDocument("A", a, 0, citation_label="A", excluded_pages=((2, 2),)),
+        CorpusDocument("B", b, 0, citation_label="B"),
+    )
+    assert [(c.source, c.page) for c in load_corpus_chunks(spec)] == [("A", 1), ("B", 1), ("B", 2)]

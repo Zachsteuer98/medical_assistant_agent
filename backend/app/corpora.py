@@ -18,6 +18,8 @@ CHROMA_ROOT = REPO_ROOT / "data"
 MANIFEST_DIR = Path(__file__).resolve().parent / "corpus_manifests"
 # Characters that would break the "[Source: <label>, Page: X]" citation marker.
 _FORBIDDEN_LABEL_CHARS = frozenset(",[]")
+# Inclusive (first, last) 1-based physical page numbers, the same numbering citations use.
+PageRange = tuple[int, int]
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
 
 
@@ -31,10 +33,31 @@ class CorpusDocument:
     citation_label: str = ""
     # If set, ingest fails when the PDF's page count differs (wrong or re-published file).
     expected_pages: int | None = None
+    # Non-clinical sections (references, search strategies, evidence tables...) that otherwise
+    # crowd retrieval results. Sorted, non-overlapping, after first_content_page.
+    excluded_pages: tuple[PageRange, ...] = ()
+
+    def __post_init__(self) -> None:
+        previous_last = self.first_content_page  # 0-based index == 1-based page before it
+        for first, last in self.excluded_pages:
+            if not previous_last < first <= last:
+                raise ValueError(
+                    f"{self.display_name}: excluded page ranges must be ordered, non-overlapping "
+                    f"and after the first content page; got {self.excluded_pages}"
+                )
+            if self.expected_pages is not None and last > self.expected_pages:
+                raise ValueError(f"{self.display_name}: excluded page {last} beyond last page")
+            previous_last = last
 
     @property
     def label(self) -> str:
         return self.citation_label or self.display_name
+
+    def is_content_page(self, page: int) -> bool:
+        """page is 1-based (as cited)."""
+        if page <= self.first_content_page:
+            return False
+        return not any(first <= page <= last for first, last in self.excluded_pages)
 
 
 @dataclass(frozen=True)
@@ -108,6 +131,7 @@ class ManifestEntry:
     sha256: str
     pages: int
     first_content_page: int
+    excluded_pages: tuple[PageRange, ...] = ()
 
     @property
     def display_name(self) -> str:
@@ -128,6 +152,7 @@ def load_manifest(corpus_name: str) -> tuple[ManifestEntry, ...]:
             sha256=d["sha256"],
             pages=int(d["pages"]),
             first_content_page=int(d["first_content_page"]),
+            excluded_pages=tuple((int(a), int(b)) for a, b in d.get("excluded_pages", ())),
         )
         for d in raw["documents"]
     )
@@ -148,6 +173,7 @@ def _public() -> CorpusSpec:
                 first_content_page=e.first_content_page,
                 citation_label=e.citation_label,
                 expected_pages=e.pages,
+                excluded_pages=e.excluded_pages,
             )
             for e in load_manifest("public")
         ),
