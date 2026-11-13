@@ -15,6 +15,9 @@ class EvalQuery:
     # its discussion). Unlabelled query sets (Merck) leave these empty.
     expected_source: str = ""
     expected_pages: tuple[int, ...] = ()
+    # Reference answer for the correctness judge: 1-3 atomic, paraphrased facts from the
+    # expected source, each tagged with its recommendation number.
+    expected_facts: tuple[str, ...] = ()
 
     @property
     def has_retrieval_labels(self) -> bool:

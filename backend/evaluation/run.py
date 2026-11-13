@@ -28,7 +28,7 @@ from app.rag.prompts import FALLBACK_ANSWER
 from app.rag.service import AssistantService
 from app.rag.store import ChromaRetriever
 from evaluation.baselines import NOTEBOOK_SYSTEM_PROMPT
-from evaluation.judge import METRICS, Judge
+from evaluation.judge import GRADE_SCORES, METRICS, Judge
 from evaluation.public_queries import PUBLIC_QUERIES
 from evaluation.queries import QUERIES, EvalQuery
 
@@ -64,8 +64,9 @@ class Job:
     llm: ChatModel
     query: EvalQuery
     corpus: CorpusSpec
-    # True when the query set carries retrieval ground truth; adds hit columns to the rows.
-    track_retrieval: bool = False
+    # True when the query set carries ground truth (expected source, pages, facts); adds
+    # retrieval-hit and correctness columns to the rows.
+    labelled: bool = False
 
 
 def metrics_for(cfg: RunConfig) -> tuple[str, ...]:
@@ -99,7 +100,13 @@ EXPERIMENT_NOTES: dict[str, str] = {
         "directly comparable to the Merck results (summary_approach.md): different corpus, "
         "different query set, and narrower guideline-specific questions. Retrieval hit rates "
         "count RAG answers whose top-k context contains the expected guideline (guideline hit) "
-        "or a chunk from that guideline's expected recommendation/discussion pages (page hit)."
+        "or a chunk from that guideline's expected recommendation/discussion pages (page hit). "
+        "Correctness is judged against 1-3 reference facts per question, without the retrieved "
+        "context: pass = every fact fully stated and no contradiction; partial = some facts "
+        "missing or incomplete, no contradiction; fail = a contradiction (conflicting advice, or "
+        "conflicting advice imported from another guideline) or no fact covered. In means, "
+        "pass = 5, partial = 3, fail = 1. Written analysis and manual review: "
+        "[analysis_public.md](analysis_public.md)."
     ),
 }
 
@@ -153,7 +160,7 @@ def run_one(job: Job, judge: Judge) -> dict:
         "answer": text,
         "context": context,
     }
-    if job.track_retrieval:
+    if job.labelled:
         row.update(retrieval_columns(job, chunks))
     for metric in METRICS:
         if metric in metrics_for(cfg):
@@ -161,6 +168,8 @@ def run_one(job: Job, judge: Judge) -> dict:
             row[metric], row[f"{metric}_rationale"] = verdict.score, verdict.rationale
         else:
             row[metric], row[f"{metric}_rationale"] = None, ""
+    if job.labelled:
+        row.update(correctness_columns(job, judge, text))
     log.info("done config=%r query=%s %s", cfg.name, q.id, {m: row[m] for m in METRICS})
     return row
 
@@ -181,13 +190,40 @@ def retrieval_columns(job: Job, chunks: list) -> dict:
     return row
 
 
+def correctness_columns(job: Job, judge: Judge, text: str) -> dict:
+    q = job.query
+    row: dict = {
+        "correctness": None,
+        "correctness_grade": "",
+        "fact_coverage": None,
+        "fact_labels": "",
+        "contradiction": None,
+        "contradiction_detail": "",
+        "correctness_rationale": "",
+    }
+    if not q.expected_facts:  # out-of-scope probes are scored by the refusal check instead
+        return row
+    source = next(d.display_name for d in job.corpus.documents if d.label == q.expected_source)
+    verdict = judge.grade_correctness(q.question, source, q.expected_facts, text)
+    row.update(
+        correctness=verdict.score,
+        correctness_grade=verdict.grade,
+        fact_coverage=round(verdict.coverage, 2),
+        fact_labels=" ".join(verdict.fact_labels),
+        contradiction=verdict.contradiction,
+        contradiction_detail=verdict.contradiction_detail,
+        correctness_rationale=verdict.rationale,
+    )
+    return row
+
+
 def _hit_rate(rows: list[dict], column: str) -> str:
     scored = [r[column] for r in rows if r[column] is not None]
     return f"{sum(scored)}/{len(scored)}" if scored else NOT_APPLICABLE
 
 
 def summarize(
-    rows: list[dict], configs: tuple[RunConfig, ...], track_retrieval: bool = False
+    rows: list[dict], configs: tuple[RunConfig, ...], labelled: bool = False
 ) -> list[dict]:
     summary = []
     for cfg in configs:
@@ -204,15 +240,30 @@ def summarize(
         entry["correct_refusals"] = (
             f"{sum(not r['answered_from_context'] for r in out_of_scope)}/{len(out_of_scope)}"
         )
-        if track_retrieval:
+        if labelled:
             entry["guideline_hit_rate"] = _hit_rate(answerable, "guideline_hit")
             entry["page_hit_rate"] = _hit_rate(answerable, "page_hit")
             entry["unwarranted_refusals"] = (
                 f"{sum(not r['answered_from_context'] for r in answerable)}/{len(answerable)}"
             )
+            entry.update(correctness_summary(answerable))
         entry["mean_latency_s"] = round(statistics.mean(r["latency_s"] for r in cfg_rows), 1)
         summary.append(entry)
     return summary
+
+
+def correctness_summary(answerable: list[dict]) -> dict:
+    graded = [r for r in answerable if r["correctness"] is not None]
+    if not graded:
+        return dict.fromkeys(
+            ("correctness", "pass/partial/fail", "mean_fact_coverage"), NOT_APPLICABLE
+        )
+    counts = "/".join(str(sum(r["correctness_grade"] == g for r in graded)) for g in GRADE_SCORES)
+    return {
+        "correctness": round(statistics.mean(r["correctness"] for r in graded), 2),
+        "pass/partial/fail": counts,
+        "mean_fact_coverage": round(statistics.mean(r["fact_coverage"] for r in graded), 2),
+    }
 
 
 def write_outputs(
@@ -237,6 +288,9 @@ def write_outputs(
         lines += ["", EXPERIMENT_NOTES[experiment]]
     lines += ["", "## Per-query scores (context_relevance / groundedness / answer_relevance)", ""]
     lines += per_query_table(rows, [s["config"] for s in summary], queries)
+    if any(q.expected_facts for q in queries):
+        lines += ["", "## Per-query correctness (grade, fact coverage; ! = contradiction)", ""]
+        lines += correctness_table(rows, [s["config"] for s in summary], queries)
     (EVAL_DIR / f"summary_{experiment}.md").write_text("\n".join(lines) + "\n")
     plot_summary(summary, EVAL_DIR / "charts" / f"{experiment}.png")
 
@@ -260,6 +314,23 @@ def per_query_table(
     return lines
 
 
+def correctness_table(
+    rows: list[dict], configs: list[str], queries: tuple[EvalQuery, ...]
+) -> list[str]:
+    lines = ["| query | " + " | ".join(configs) + " |", "|" + "---|" * (len(configs) + 1)]
+    for q in queries:
+        if not q.expected_facts:
+            continue
+        q_rows = {r["config"]: r for r in rows if r["query_id"] == q.id}
+        cells = [
+            f"{r['correctness_grade']} {r['fact_coverage']:.2f}"
+            + (" !" if r["contradiction"] else "")
+            for r in (q_rows[c] for c in configs)
+        ]
+        lines.append(f"| {q.id} {q.category} | " + " | ".join(cells) + " |")
+    return lines
+
+
 def _hit_cell(q_rows: list[dict]) -> str:
     scored = [r for r in q_rows if r["guideline_hit"] is not None]
     if not scored:
@@ -277,17 +348,19 @@ def plot_summary(summary: list[dict], path: Path) -> None:
         "context_relevance": "Context relevance",
         "groundedness": "Groundedness",
         "answer_relevance": "Answer relevance",
+        "correctness": "Correctness\n(pass=5, partial=3, fail=1)",
     }
+    metrics = METRICS + (("correctness",) if "correctness" in summary[0] else ())
     width = 0.8 / len(summary)
     fig, ax = plt.subplots(figsize=(10, 5), dpi=200)
     for i, s in enumerate(summary):
-        xs = [j + i * width for j in range(len(METRICS))]
-        values = [s[m] if s[m] != NOT_APPLICABLE else 0 for m in METRICS]
+        xs = [j + i * width for j in range(len(metrics))]
+        values = [s[m] if s[m] != NOT_APPLICABLE else 0 for m in metrics]
         bars = ax.bar(xs, values, width, label=s["config"])
-        bar_text = ["n/a" if s[m] == NOT_APPLICABLE else f"{s[m]:.2f}" for m in METRICS]
+        bar_text = ["n/a" if s[m] == NOT_APPLICABLE else f"{s[m]:.2f}" for m in metrics]
         ax.bar_label(bars, labels=bar_text, fontsize=8)
-    ax.set_xticks([j + width * (len(summary) - 1) / 2 for j in range(len(METRICS))])
-    ax.set_xticklabels([labels[m] for m in METRICS])
+    ax.set_xticks([j + width * (len(summary) - 1) / 2 for j in range(len(metrics))])
+    ax.set_xticklabels([labels[m] for m in metrics])
     ax.set_ylim(0, 5.5)
     ax.set_ylabel("Mean judge score (1-5)")
     ax.spines[["top", "right"]].set_visible(False)
@@ -308,7 +381,7 @@ def main() -> None:
     corpus_name = experiment_corpus(configs)
     corpus = get_corpus(corpus_name)
     queries = QUERY_SETS[corpus_name]
-    track_retrieval = has_retrieval_labels(queries)
+    labelled = has_retrieval_labels(queries)
     llm = OpenAIChatModel(
         settings.openai_api_key,
         settings.openai_base_url,
@@ -330,12 +403,12 @@ def main() -> None:
             settings.mmr_lambda,
         )
         svc = AssistantService(retriever, llm, corpus, cfg.k)
-        jobs += [Job(cfg, svc, retriever, llm, q, corpus, track_retrieval) for q in queries]
+        jobs += [Job(cfg, svc, retriever, llm, q, corpus, labelled) for q in queries]
 
     log.info("running %d answers, judged by %s", len(jobs), JUDGE_MODEL)
     with ThreadPoolExecutor(WORKERS) as pool:
         rows = list(pool.map(lambda job: run_one(job, judge), jobs))
-    summary = summarize(rows, configs, track_retrieval)
+    summary = summarize(rows, configs, labelled)
     write_outputs(args.experiment, rows, summary, queries)
     for s in summary:
         log.info("summary %s", s)
