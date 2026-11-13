@@ -1,6 +1,6 @@
 """Chroma-backed vector store: index building (ingest) and MMR retrieval (serving)."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -23,6 +23,17 @@ class IndexNotReadyError(RuntimeError):
 class Chunk:
     text: str
     page: int  # 1-based PDF page
+    # Display name of the source document. Empty for indexes built before multi-document
+    # corpora existed; the corpus resolves that to its only document.
+    source: str = ""
+
+
+def chunk_metadata(chunk: Chunk) -> dict[str, str | int]:
+    return {"page": chunk.page, "source": chunk.source}
+
+
+def chunk_from_record(text: str, metadata: Mapping[str, object]) -> Chunk:
+    return Chunk(text=text, page=int(metadata["page"]), source=str(metadata.get("source", "")))
 
 
 class Retriever(Protocol):
@@ -52,7 +63,7 @@ def build_index(chroma_dir: Path, collection: str, chunks: Sequence[Chunk]) -> i
         col.add(
             ids=[f"{collection}-{start + i}" for i in range(len(batch))],
             documents=[c.text for c in batch],
-            metadatas=[{"page": c.page} for c in batch],
+            metadatas=[chunk_metadata(c) for c in batch],
         )
     return col.count()
 
@@ -92,4 +103,4 @@ class ChromaRetriever:
 
         query_vec = np.asarray(self._embed([question])[0], dtype=np.float64)
         picked = mmr_select(query_vec, vectors[unique], k, self._mmr_lambda)
-        return [Chunk(text=docs[unique[i]], page=int(metas[unique[i]]["page"])) for i in picked]
+        return [chunk_from_record(docs[unique[i]], metas[unique[i]]) for i in picked]

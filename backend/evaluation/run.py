@@ -21,8 +21,8 @@ from openai import OpenAI
 from app.config import REPO_ROOT, get_settings
 from app.corpora import get_corpus
 from app.rag.llm import ChatModel, OpenAIChatModel
-from app.rag.prompts import FALLBACK_ANSWER, format_context
-from app.rag.service import AssistantService, cited_pages
+from app.rag.prompts import FALLBACK_ANSWER
+from app.rag.service import AssistantService
 from app.rag.store import ChromaRetriever
 from evaluation.baselines import NOTEBOOK_SYSTEM_PROMPT
 from evaluation.judge import METRICS, Judge
@@ -95,7 +95,7 @@ def answer(job: Job) -> tuple[str, list, float]:
 def run_one(job: Job, judge: Judge) -> dict:
     cfg, q = job.cfg, job.query
     text, chunks, latency_s = answer(job)
-    context = format_context([(c.page, c.text) for c in chunks])
+    context = job.svc.format_context(chunks)
     row = {
         "config": cfg.name,
         "query_id": q.id,
@@ -103,7 +103,7 @@ def run_one(job: Job, judge: Judge) -> dict:
         "answerable": q.answerable,
         "question": q.question,
         "answered_from_context": FALLBACK_ANSWER not in text,
-        "cites_pages": bool(cited_pages(text)),
+        "cites_pages": bool(job.svc.cited_keys(text)),
         "retrieved_pages": " ".join(str(c.page) for c in chunks),
         "context_tokens_approx": len(context) // 4,
         "latency_s": round(latency_s, 2),
@@ -221,7 +221,10 @@ def main() -> None:
     jobs = []
     for cfg in configs:
         retriever = ChromaRetriever(
-            settings.chroma_dir, cfg.collection, cfg.k * FETCH_K_MULTIPLIER, settings.mmr_lambda
+            corpus.chroma_dir(settings.chroma_dir),
+            cfg.collection,
+            cfg.k * FETCH_K_MULTIPLIER,
+            settings.mmr_lambda,
         )
         svc = AssistantService(retriever, llm, corpus, cfg.k)
         jobs += [Job(cfg, svc, retriever, llm, q) for q in QUERIES]

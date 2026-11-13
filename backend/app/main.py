@@ -22,7 +22,7 @@ logger = logging.getLogger("medical_assistant")
 def build_service(settings: Settings) -> AssistantService:
     corpus = get_corpus(settings.corpus)
     retriever = ChromaRetriever(
-        settings.chroma_dir,
+        corpus.chroma_dir(settings.chroma_dir),
         settings.collection or corpus.name,
         settings.fetch_k,
         settings.mmr_lambda,

@@ -27,7 +27,9 @@ class Settings(BaseSettings):
     mmr_lambda: float = 0.7
     llm_timeout_s: float = 30.0
 
-    chroma_dir: Path = REPO_ROOT / "data" / "chroma"
+    # Unset: each corpus uses its own store (see corpora.CorpusSpec.default_chroma_dir), so a
+    # public-corpus index never shares a database file with licensed Merck-derived data.
+    chroma_dir: Path | None = None
     allowed_origins: list[str] = ["http://localhost:5173"]
     rate_limit_per_minute: int = 10
     # Extra comma-separated regexes for corpus-specific noise lines.

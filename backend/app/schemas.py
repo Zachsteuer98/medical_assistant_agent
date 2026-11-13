@@ -21,8 +21,16 @@ class AskRequest(BaseModel):
 
 
 class Citation(BaseModel):
-    source: str
-    page: int = Field(description="1-based PDF page number")
+    source: str = Field(description="Corpus display name")
+    document: str = Field(
+        description="Display name of the document within the corpus (e.g. guideline title + "
+        "year); equals `source` for single-document corpora"
+    )
+    citation_label: str = Field(
+        description="Short document name used in multi-document answer markers "
+        "'[Source: <citation_label>, Page: X]'; single-document corpora use '[Source Page: X]'"
+    )
+    page: int = Field(description="1-based PDF page number within `document`")
     snippet: str
     cited: bool = Field(description="True if the answer explicitly cites this page")
 

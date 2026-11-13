@@ -32,6 +32,8 @@ def test_ask_returns_answer_with_citations_and_disclaimer():
     assert body["answer"].startswith("Appendectomy")
     assert body["citations"][0] == {
         "source": "Test Manual",
+        "document": "Test Manual",
+        "citation_label": "Test Manual",
         "page": 175,
         "snippet": "Appendectomy text",
         "cited": True,

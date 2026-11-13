@@ -1,14 +1,28 @@
 """Test doubles: no network, no vector DB."""
 
-from app.corpora import CorpusSpec
+from pathlib import Path
+
+from app.corpora import CorpusDocument, CorpusSpec
 from app.rag.llm import LLMError
 from app.rag.store import Chunk
 
 TEST_CORPUS = CorpusSpec(
     name="test",
     display_name="Test Manual",
-    pdf_path=None,
-    first_content_page=0,  # type: ignore[arg-type]
+    documents=(CorpusDocument("Test Manual", Path("unused.pdf"), first_content_page=0),),
+)
+
+MULTI_CORPUS = CorpusSpec(
+    name="multi",
+    display_name="Test Guidelines",
+    documents=(
+        CorpusDocument(
+            "Guideline for Diabetes (2023)", Path("unused-a.pdf"), 0, citation_label="Diabetes"
+        ),
+        CorpusDocument(
+            "Guideline for Hypertension (2026)", Path("unused-b.pdf"), 0, citation_label="HTN"
+        ),
+    ),
 )
 
 
