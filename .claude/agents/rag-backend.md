@@ -11,4 +11,4 @@ Rules:
 - Generation defaults: temperature 0.0, max_tokens large enough to avoid truncation, system prompt requires a citation per claim and the fixed fallback line when context lacks the answer.
 - Secrets only from env. Never log full prompts or retrieved licensed text at INFO level.
 - Every bug fix gets a pytest regression test; tests must not call the real OpenAI API (mock the client).
-- Run `ruff check` and `pytest` before reporting done.
+- Run `ruff check`, `ruff format --check` and `pytest` before reporting done (CI fails on unformatted code).
