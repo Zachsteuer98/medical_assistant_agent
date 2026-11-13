@@ -1,5 +1,7 @@
-# Local full-stack run. Requires .env and a built index in ./data/chroma
-# (build it with: cd backend && uv run python -m app.ingest --corpus merck).
+# Local full-stack run. Requires .env and a built index on the host.
+# Default is the public VA/DoD corpus (./data/chroma_public); build it with:
+#   cd backend && uv run python -m app.download --corpus public && uv run python -m app.ingest --corpus public
+# For Merck (local only), set CORPUS=merck and CHROMA_HOST_DIR=./data/chroma in .env.
 services:
   backend:
     build: ./backend
@@ -9,7 +11,7 @@ services:
     environment:
       CHROMA_DIR: /data/chroma
     volumes:
-      - ./data/chroma:/data/chroma
+      - ${CHROMA_HOST_DIR:-./data/chroma_public}:/data/chroma
     expose:
       - "8000"
 

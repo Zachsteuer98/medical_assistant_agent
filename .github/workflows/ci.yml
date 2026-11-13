@@ -21,7 +21,7 @@ jobs:
       - name: Block corpus data, secrets and env files
         run: |
           set -euo pipefail
-          forbidden=$(git ls-files | grep -E '\.pdf$|(^|/)\.env$|(^|/)chroma/|\.sqlite3?$|^eval/results/.*\.csv$|(^|/)config\.json$' || true)
+          forbidden=$(git ls-files | grep -E '\.pdf$|(^|/)\.env$|(^|/)chroma[^/]*/|\.sqlite3?$|^eval/results/.*\.csv$|(^|/)config\.json$' || true)
           if [ -n "$forbidden" ]; then echo "::error::Forbidden files tracked:"; echo "$forbidden"; exit 1; fi
           if git grep -nIE 'sk-[A-Za-z0-9_-]{20,}' -- . ':!*.lock' ':!*package-lock.json'; then
             echo "::error::Possible API key committed"; exit 1

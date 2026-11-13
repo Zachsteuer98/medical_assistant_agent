@@ -20,7 +20,8 @@ questions from trusted reference manuals and cites the exact source page for eve
 - [x] Business findings deck ([PowerPoint](deck/Medical_Assistant_Agent_Findings.pptx))
 - [ ] Demo GIF and screenshots in this README
 - [x] Public demo corpus chosen: VA/DoD Clinical Practice Guidelines ([ADR 0004](docs/adr/0004-public-demo-corpus.md))
-- [ ] Public corpus ingest (multi-PDF) and eval run
+- [x] Public corpus: pinned download, multi-PDF ingest, guideline-named citations in the UI
+- [ ] Public corpus eval run
 - [ ] Deployment with rate limiting and a spend cap
 
 ## Business findings
@@ -38,27 +39,44 @@ Key decisions are recorded in [`docs/adr/`](docs/adr/).
 
 ## Run locally
 
-Prerequisites: Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22, an OpenAI API key,
-and a corpus PDF at `data/raw/merck.pdf` (not included — see below).
+Prerequisites: Python 3.12 + [uv](https://docs.astral.sh/uv/), Node 22 and an OpenAI API key.
+By default the app serves the **public corpus**: 10 VA/DoD Clinical Practice Guidelines that a
+script downloads for you ([ADR 0004](docs/adr/0004-public-demo-corpus.md)).
 
 ```bash
-cp .env.example .env                       # add OPENAI_API_KEY
+cp .env.example .env                              # add OPENAI_API_KEY; CORPUS=public by default
 
 cd backend
 uv sync --all-groups
-uv run python -m app.ingest --corpus merck # build the vector index (~15-20 min on CPU)
-uv run uvicorn app.main:create_app --factory --port 8000
+uv run python -m app.download --corpus public     # fetch the 10 pinned PDFs (hash-checked)
+uv run python -m app.ingest --corpus public       # build data/chroma_public (~6 min on CPU)
+CORPUS=public uv run uvicorn app.main:create_app --factory --port 8000
 
-cd ../frontend                             # in a second terminal
+cd ../frontend                                    # in a second terminal
 npm install
-npm run dev                                # http://localhost:5173
+npm run dev                                       # http://localhost:5173
 ```
+
+<details>
+<summary>Merck corpus (local only, licensed copy required)</summary>
+
+Place your own copy at `data/raw/merck.pdf` (not included, see [Data & licensing](#data--licensing)), then:
+
+```bash
+cd backend
+uv run python -m app.ingest --corpus merck        # builds data/chroma (~15-20 min on CPU)
+CORPUS=merck uv run uvicorn app.main:create_app --factory --port 8000
+```
+</details>
 
 ### Or with Docker
 
 ```bash
-docker compose up --build                  # http://localhost:8080 (index must already exist in data/chroma)
+docker compose up --build                         # http://localhost:8080
 ```
+
+The index must already exist on the host. Compose mounts `CHROMA_HOST_DIR` (default
+`./data/chroma_public`). For Merck, set `CORPUS=merck` and `CHROMA_HOST_DIR=./data/chroma` in `.env`.
 
 ## Test
 
@@ -70,7 +88,7 @@ cd frontend && npm test && npm run lint && npm run build
 ## Evaluate
 
 ```bash
-cd backend && uv run python -m evaluation.run --experiment chunk_size   # ~$1-2 API cost
+cd backend && uv run python -m evaluation.run --experiment chunk_size   # ~$1-2 API cost (Merck query set)
 ```
 
 ## Data & licensing
