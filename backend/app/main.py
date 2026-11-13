@@ -35,12 +35,14 @@ def routing_config(
 
 def build_service(settings: Settings) -> AssistantService:
     corpus = get_corpus(settings.corpus)
+    routing = routing_config(settings, corpus)
     retriever = ChromaRetriever(
         corpus.chroma_dir(settings.chroma_dir),
-        settings.collection or corpus.name,
+        settings.collection or corpus.default_collection,
         settings.fetch_k,
         settings.mmr_lambda,
-        routing_config(settings, corpus),
+        routing,
+        hybrid=settings.hybrid_retrieval and routing is not None,
     )
     llm = OpenAIChatModel(
         api_key=settings.openai_api_key,

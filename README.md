@@ -31,7 +31,7 @@ questions from trusted reference manuals and cites the exact source page for eve
 ## Architecture
 
 ```
-React (Vite, TS) ──/api/ask──▶ FastAPI ──▶ Chroma (MiniLM embeddings, guideline routing + MMR)
+React (Vite, TS) ──/api/ask──▶ FastAPI ──▶ Chroma (MiniLM; guideline routing → BM25 + dense hybrid → MMR)
    citation chips  ◀── answer + citations ──┘      └──▶ gpt-4o-mini (temp 0)
 ```
 
@@ -49,7 +49,7 @@ cp .env.example .env                              # add OPENAI_API_KEY; CORPUS=p
 cd backend
 uv sync --all-groups
 uv run python -m app.download --corpus public     # fetch the 10 pinned PDFs (hash-checked)
-uv run python -m app.ingest --corpus public       # build data/chroma_public (~6 min on CPU)
+uv run python -m app.ingest --corpus public       # build the public_rec collection in data/chroma_public (~6 min on CPU)
 CORPUS=public uv run uvicorn app.main:create_app --factory --port 8000
 
 cd ../frontend                                    # in a second terminal

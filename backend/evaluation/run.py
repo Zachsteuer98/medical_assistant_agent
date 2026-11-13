@@ -58,6 +58,8 @@ class RunConfig:
     # Guideline routing (multi-document corpora only); set explicitly so a run never depends
     # on the ROUTE_BY_DOCUMENT environment setting.
     route: bool = False
+    # BM25 + dense fusion inside the routed guideline(s); requires route=True.
+    hybrid: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,13 +98,24 @@ EXPERIMENTS: dict[str, tuple[RunConfig, ...]] = {
         RunConfig("Prompt-engineered LLM", "public", 200, 5, mode="prompted", corpus="public"),
         RunConfig("RAG (no routing)", "public", 200, 5, mode="rag", corpus="public"),
         RunConfig(
-            "RAG (production, guideline routing)",
+            "RAG (guideline routing)",
             "public",
             200,
             5,
             mode="rag",
             corpus="public",
             route=True,
+        ),
+        # Production: recommendation-aware chunks (collection public_rec) + BM25/dense fusion.
+        RunConfig(
+            "RAG (production, rec chunks + hybrid)",
+            "public_rec",
+            200,
+            5,
+            mode="rag",
+            corpus="public",
+            route=True,
+            hybrid=True,
         ),
     ),
 }
@@ -280,11 +293,62 @@ def correctness_summary(answerable: list[dict]) -> dict:
     }
 
 
+# Column types for reading rows back from a results CSV (everything else stays a string).
+_BOOL_COLUMNS = frozenset(
+    {"answerable", "answered_from_context", "cites_pages", "guideline_hit", "page_hit"}
+    | {"contradiction"}
+)
+_INT_COLUMNS = frozenset({*METRICS, "context_tokens_approx", "correctness"})
+_FLOAT_COLUMNS = frozenset({"latency_s", "fact_coverage"})
+
+
+def _parse_cell(column: str, value: str) -> object:
+    if column not in _BOOL_COLUMNS | _INT_COLUMNS | _FLOAT_COLUMNS:
+        return value
+    if value == "":
+        return None
+    if column in _BOOL_COLUMNS:
+        return value == "True"
+    return int(value) if column in _INT_COLUMNS else float(value)
+
+
+def load_rows(path: Path) -> list[dict]:
+    """Rows of a results CSV written by write_outputs, with their original types."""
+    with open(path, newline="") as f:
+        return [{k: _parse_cell(k, v) for k, v in row.items()} for row in csv.DictReader(f)]
+
+
+def select_configs(
+    configs: tuple[RunConfig, ...], names: list[str] | None
+) -> tuple[RunConfig, ...]:
+    if not names:
+        return configs
+    unknown = set(names) - {c.name for c in configs}
+    if unknown:
+        raise ValueError(
+            f"Unknown config(s) {sorted(unknown)}; expected {[c.name for c in configs]}"
+        )
+    return tuple(c for c in configs if c.name in names)
+
+
+def reused_rows(previous: list[dict], configs: tuple[RunConfig, ...], ran: set[str]) -> list[dict]:
+    """Rows of configs not re-run this time, taken from the previous results.
+
+    Fails if a config has neither fresh nor previous rows, so a summary is never partial.
+    """
+    keep = [r for r in previous if r["config"] not in ran]
+    missing = {c.name for c in configs} - ran - {r["config"] for r in keep}
+    if missing:
+        raise ValueError(f"No previous results for {sorted(missing)}; run them too")
+    return [r for r in keep if r["config"] in {c.name for c in configs}]
+
+
 def write_outputs(
     experiment: str,
     rows: list[dict],
     summary: list[dict],
     queries: tuple[EvalQuery, ...] = QUERIES,
+    reused: tuple[str, ...] = (),
 ) -> None:
     (EVAL_DIR / "results").mkdir(parents=True, exist_ok=True)
     (EVAL_DIR / "charts").mkdir(parents=True, exist_ok=True)
@@ -300,6 +364,8 @@ def write_outputs(
     lines += ["| " + " | ".join(str(s[h]) for h in header) + " |" for s in summary]
     if experiment in EXPERIMENT_NOTES:
         lines += ["", EXPERIMENT_NOTES[experiment]]
+    if reused:
+        lines += ["", f"Rows reused from the previous run (not re-run): {', '.join(reused)}."]
     lines += ["", "## Per-query scores (context_relevance / groundedness / answer_relevance)", ""]
     lines += per_query_table(rows, [s["config"] for s in summary], queries)
     if any(q.expected_facts for q in queries):
@@ -388,10 +454,19 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment", choices=sorted(EXPERIMENTS), required=True)
+    parser.add_argument(
+        "--configs",
+        nargs="+",
+        help="Run only these config names; the others are reused from the previous results CSV",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
     configs = EXPERIMENTS[args.experiment]
+    to_run = select_configs(configs, args.configs)
+    previous_path = EVAL_DIR / "results" / f"{args.experiment}.csv"
+    ran = {c.name for c in to_run}
+    reused = reused_rows(load_rows(previous_path), configs, ran) if args.configs else []
     corpus_name = experiment_corpus(configs)
     corpus = get_corpus(corpus_name)
     queries = QUERY_SETS[corpus_name]
@@ -409,22 +484,26 @@ def main() -> None:
         JUDGE_MODEL,
     )
     jobs = []
-    for cfg in configs:
+    for cfg in to_run:
         retriever = ChromaRetriever(
             corpus.chroma_dir(settings.chroma_dir),
             cfg.collection,
             cfg.k * FETCH_K_MULTIPLIER,
             settings.mmr_lambda,
             routing_config(settings, corpus, cfg.route),
+            hybrid=cfg.hybrid,
         )
         svc = AssistantService(retriever, llm, corpus, cfg.k)
         jobs += [Job(cfg, svc, retriever, llm, q, corpus, labelled) for q in queries]
 
     log.info("running %d answers, judged by %s", len(jobs), JUDGE_MODEL)
     with ThreadPoolExecutor(WORKERS) as pool:
-        rows = list(pool.map(lambda job: run_one(job, judge), jobs))
+        fresh = list(pool.map(lambda job: run_one(job, judge), jobs))
+    order = {c.name: i for i, c in enumerate(configs)}
+    rows = sorted(reused + fresh, key=lambda r: order[r["config"]])  # stable within config
     summary = summarize(rows, configs, labelled)
-    write_outputs(args.experiment, rows, summary, queries)
+    reused_names = tuple(c.name for c in configs if c.name not in ran)
+    write_outputs(args.experiment, rows, summary, queries, reused_names)
     for s in summary:
         log.info("summary %s", s)
 

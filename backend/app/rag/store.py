@@ -13,6 +13,7 @@ import numpy as np
 from chromadb.config import Settings as ChromaSettings
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
+from app.rag.lexical import BM25Index, ranks, reciprocal_rank_fusion
 from app.rag.mmr import mmr_select
 from app.rag.routing import RoutingConfig, route_documents
 
@@ -106,6 +107,28 @@ def build_index(
     return col.count()
 
 
+class _ChunkTable:
+    """Every chunk of a collection in memory, for exact hybrid scoring inside routed documents.
+
+    Only built for hybrid retrieval (multi-document corpora: ~4k chunks, ~6 MB of vectors).
+    """
+
+    def __init__(self, col: Any):
+        got = col.get(include=["documents", "metadatas", "embeddings"])
+        self.texts: list[str] = got["documents"]
+        self.metas: list[Mapping[str, object]] = got["metadatas"]
+        vectors = np.asarray(got["embeddings"], dtype=np.float64)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        self.vectors = vectors / np.where(norms == 0, 1, norms)
+        self.sources = np.array([str(m.get("source", "")) for m in self.metas])
+        self.bm25 = BM25Index(self.texts)
+
+    def indices(self, documents: list[str] | None) -> np.ndarray:
+        if documents is None:
+            return np.arange(len(self.texts))
+        return np.flatnonzero(np.isin(self.sources, documents))
+
+
 class ChromaRetriever:
     def __init__(
         self,
@@ -114,7 +137,10 @@ class ChromaRetriever:
         fetch_k: int,
         mmr_lambda: float,
         routing: RoutingConfig | None = None,
+        hybrid: bool = False,
     ):
+        if hybrid and routing is None:
+            raise ValueError("hybrid retrieval requires document routing")
         self._embed = DefaultEmbeddingFunction()
         try:
             self._col = _client(chroma_dir).get_collection(
@@ -129,6 +155,7 @@ class ChromaRetriever:
         self._mmr_lambda = mmr_lambda
         # None: plain MMR over the whole collection (single-document corpora, routing off).
         self._routing = routing
+        self._table = _ChunkTable(self._col) if hybrid else None
 
     def count(self) -> int:
         return self._col.count()
@@ -147,8 +174,10 @@ class ChromaRetriever:
     def _retrieve_routed(self, question: str, k: int, routing: RoutingConfig) -> list[Chunk]:
         # Embed once: the query embedding dominates retrieval latency on CPU (~0.3 s).
         query_vec = np.asarray(self._embed([question])[0], dtype=np.float64)
-        where = self._route(query_vec, routing)
-        filters = {"where": where} if where else {}
+        documents = self._route(query_vec, routing)
+        if self._table is not None:
+            return self._retrieve_hybrid(question, query_vec, documents, k, self._table)
+        filters = {"where": _source_filter(documents)} if documents else {}
         result = self._col.query(
             query_embeddings=[query_vec],
             n_results=self._fetch_k,
@@ -157,8 +186,44 @@ class ChromaRetriever:
         )
         return self._select(result, query_vec, k)
 
-    def _route(self, query_vec: np.ndarray, routing: RoutingConfig) -> dict | None:
-        """Chroma filter restricting retrieval to the routed document(s); None if no-op."""
+    def _retrieve_hybrid(
+        self,
+        question: str,
+        query_vec: np.ndarray,
+        documents: list[str] | None,
+        k: int,
+        table: _ChunkTable,
+    ) -> list[Chunk]:
+        """Dense + BM25 over every chunk of the routed documents, fused by reciprocal rank.
+
+        The fused score is also MMR's relevance term: with dense relevance, MMR would drop
+        exactly the lexical hits that dense retrieval ranked low.
+        """
+        idx = table.indices(documents)
+        if len(idx) == 0:
+            return []
+        q = query_vec / (np.linalg.norm(query_vec) or 1.0)
+        dense = table.vectors[idx] @ q
+        lexical = table.bm25.scores(question, idx)
+        fused = reciprocal_rank_fusion(ranks(dense), ranks(lexical))
+        seen: set[str] = set()
+        pool = [
+            int(i)
+            for i in np.argsort(-fused, kind="stable")
+            if not (table.texts[idx[i]].strip() in seen or seen.add(table.texts[idx[i]].strip()))
+        ][: self._fetch_k]
+        relevance = fused[pool]
+        spread = relevance.max() - relevance.min()
+        relevance = (relevance - relevance.min()) / (spread or 1.0)
+        picked = mmr_select(
+            query_vec, table.vectors[idx[pool]], k, self._mmr_lambda, relevance=relevance
+        )
+        return [
+            chunk_from_record(table.texts[idx[pool[i]]], table.metas[idx[pool[i]]]) for i in picked
+        ]
+
+    def _route(self, query_vec: np.ndarray, routing: RoutingConfig) -> list[str] | None:
+        """Routed document name(s); None if routing is a no-op for this index."""
         result = self._col.query(
             query_embeddings=[query_vec],
             n_results=routing.candidates,
@@ -170,9 +235,7 @@ class ChromaRetriever:
         similarities = [1.0 - d for d in result["distances"][0]]  # cosine space
         documents = route_documents(sources, similarities, routing.second_document_ratio)
         log.debug("routed to documents=%s", documents)
-        if len(documents) == 1:
-            return {"source": documents[0]}
-        return {"source": {"$in": documents}}
+        return documents
 
     def _select(self, result: Any, query_vec: np.ndarray, k: int) -> list[Chunk]:
         """MMR over a Chroma query result."""
@@ -187,3 +250,9 @@ class ChromaRetriever:
 
         picked = mmr_select(query_vec, vectors[unique], k, self._mmr_lambda)
         return [chunk_from_record(docs[unique[i]], metas[unique[i]]) for i in picked]
+
+
+def _source_filter(documents: list[str]) -> dict:
+    if len(documents) == 1:
+        return {"source": documents[0]}
+    return {"source": {"$in": documents}}

@@ -7,6 +7,7 @@ import pytest
 from app.corpora import get_corpus
 from app.rag.service import AssistantService
 from app.rag.store import Chunk
+from evaluation import run as run_module
 from evaluation.judge import METRICS, CorrectnessVerdict, Verdict
 from evaluation.public_queries import PUBLIC_QUERIES
 from evaluation.queries import QUERIES, EvalQuery
@@ -19,10 +20,14 @@ from evaluation.run import (
     correctness_table,
     experiment_corpus,
     has_retrieval_labels,
+    load_rows,
     per_query_table,
     retrieval_hits,
+    reused_rows,
     run_one,
+    select_configs,
     summarize,
+    write_outputs,
 )
 from tests.fakes import MULTI_CORPUS, FakeLLM, FakeRetriever
 
@@ -76,17 +81,25 @@ def test_merck_experiments_still_use_merck_corpus_and_queries():
 def test_public_experiment_compares_same_approaches_on_public_corpus():
     public, merck = EXPERIMENTS["public_approach"], EXPERIMENTS["approach"]
     assert experiment_corpus(public) == "public"
-    *unrouted, routed = public
-    assert [(c.mode, c.k, c.chunk_tokens, c.route) for c in unrouted] == [
-        (c.mode, c.k, c.chunk_tokens, False) for c in merck
+    *same_as_merck, routed, rec_hybrid = public
+    assert [(c.mode, c.k, c.chunk_tokens, c.route, c.hybrid) for c in same_as_merck] == [
+        (c.mode, c.k, c.chunk_tokens, False, False) for c in merck
     ]
-    assert (routed.mode, routed.k, routed.chunk_tokens, routed.route) == ("rag", 5, 200, True)
-    assert "production" in routed.name and "production" not in unrouted[-1].name
-    assert {c.collection for c in public} == {"public"}
+    assert (routed.collection, routed.route, routed.hybrid) == ("public", True, False)
+    assert (rec_hybrid.collection, rec_hybrid.route, rec_hybrid.hybrid) == (
+        "public_rec",
+        True,
+        True,
+    )
+    assert "production" in rec_hybrid.name
+    assert not any("production" in c.name for c in public[:-1])
+    assert {c.k for c in public} == {5}
 
 
 def test_merck_experiments_never_route():
-    assert not any(c.route for name in ("chunk_size", "approach") for c in EXPERIMENTS[name])
+    merck = [c for name in ("chunk_size", "approach") for c in EXPERIMENTS[name]]
+    assert not any(c.route or c.hybrid for c in merck)
+    assert {c.collection for c in merck} <= {"merck", "merck_c1000"}
 
 
 def test_experiment_spanning_two_corpora_is_rejected():
@@ -252,3 +265,37 @@ def test_per_query_table_adds_hit_column_for_labelled_sets():
 def test_per_query_table_unchanged_for_unlabelled_sets():
     rows = [_row("RAG", "T2", False, False)]
     assert per_query_table(rows, ["RAG"], (OUT_OF_SCOPE,))[0] == "| query | RAG |"
+
+
+# --- partial re-runs (--configs) ------------------------------------------------------------
+
+
+def test_results_csv_round_trips_with_types(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_module, "EVAL_DIR", tmp_path)
+    monkeypatch.setattr(run_module, "plot_summary", lambda *a: None)
+    rows = [
+        run_one(
+            _job(RAG, LABELLED, [Chunk("text", 5, DIABETES)], "A [Source: Diabetes, Page: 5]"),
+            FakeJudge(),
+        ),
+        run_one(_job(RAG, OUT_OF_SCOPE, [Chunk("text", 5, DIABETES)], "refused"), FakeJudge()),
+    ]
+    write_outputs("x", rows, summarize(rows, (RAG,), labelled=True), (LABELLED, OUT_OF_SCOPE))
+
+    assert load_rows(tmp_path / "results" / "x.csv") == rows
+
+
+def test_select_configs_rejects_unknown_names():
+    configs = EXPERIMENTS["public_approach"]
+    assert select_configs(configs, None) == configs
+    assert [c.name for c in select_configs(configs, [configs[-1].name])] == [configs[-1].name]
+    with pytest.raises(ValueError, match="Unknown config"):
+        select_configs(configs, ["nope"])
+
+
+def test_reused_rows_keep_other_configs_and_refuse_partial_summaries():
+    configs = (RunConfig("a", "public", 200, 5), RunConfig("b", "public", 200, 5))
+    previous = [{"config": "a", "v": 1}, {"config": "b", "v": 2}, {"config": "gone", "v": 3}]
+    assert reused_rows(previous, configs, {"b"}) == [{"config": "a", "v": 1}]
+    with pytest.raises(ValueError, match="No previous results"):
+        reused_rows([{"config": "b"}], configs, {"b"})

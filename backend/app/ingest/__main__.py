@@ -12,7 +12,11 @@ import pymupdf
 
 from app.config import get_settings
 from app.corpora import CorpusDocument, CorpusSpec, get_corpus
-from app.ingest.chunking import DEFAULT_CHUNK_TOKENS, DEFAULT_OVERLAP_TOKENS, split_text
+from app.ingest.chunking import (
+    DEFAULT_CHUNK_TOKENS,
+    DEFAULT_OVERLAP_TOKENS,
+    split_text_structured,
+)
 from app.ingest.cleaning import clean_page_text, compile_patterns
 from app.rag.store import Chunk, build_index
 
@@ -39,17 +43,26 @@ def load_corpus_chunks(
     if missing:
         raise FileNotFoundError(f"Corpus PDF(s) not found: {', '.join(missing)}")
     noise = compile_patterns([*corpus.noise_line_patterns, *extra_patterns.split(",")])
+    structure = (
+        _multiline(corpus.section_boundary_pattern),
+        _multiline(corpus.item_boundary_pattern),
+    )
     chunks: list[Chunk] = []
     for document in corpus.documents:
-        doc_chunks = _document_chunks(document, noise, chunk_tokens, overlap_tokens)
+        doc_chunks = _document_chunks(document, noise, structure, chunk_tokens, overlap_tokens)
         log.info("chunked document=%r chunks=%d", document.display_name, len(doc_chunks))
         chunks.extend(doc_chunks)
     return chunks
 
 
+def _multiline(pattern: str | None) -> re.Pattern[str] | None:
+    return re.compile(pattern, re.MULTILINE) if pattern else None
+
+
 def _document_chunks(
     document: CorpusDocument,
     noise: tuple[re.Pattern[str], ...],
+    structure: tuple[re.Pattern[str] | None, re.Pattern[str] | None],
     chunk_tokens: int,
     overlap_tokens: int,
 ) -> list[Chunk]:
@@ -67,7 +80,7 @@ def _document_chunks(
             chunks.extend(
                 # Page = 1-based physical PDF page, what a PDF viewer shows (see app.corpora).
                 Chunk(text=piece, page=index + 1, source=document.display_name)
-                for piece in split_text(text, chunk_tokens, overlap_tokens)
+                for piece in split_text_structured(text, *structure, chunk_tokens, overlap_tokens)
                 if len(piece) >= MIN_CHUNK_CHARS
             )
     return chunks
@@ -80,14 +93,14 @@ def main() -> None:
     parser.add_argument("--chunk-tokens", type=int, default=DEFAULT_CHUNK_TOKENS)
     parser.add_argument("--overlap-tokens", type=int, default=DEFAULT_OVERLAP_TOKENS)
     parser.add_argument(
-        "--collection", default=None, help="Collection name (defaults to the corpus name)"
+        "--collection", default=None, help="Collection name (defaults to the corpus's collection)"
     )
     args = parser.parse_args()
     settings = get_settings()
     corpus = args.corpus or settings.corpus
 
     started = time.perf_counter()
-    collection = args.collection or corpus
+    collection = args.collection or get_corpus(corpus).default_collection
     chunks = load_chunks(
         corpus, settings.watermark_patterns, args.chunk_tokens, args.overlap_tokens
     )

@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     corpus: str = "merck"
-    # Vector collection to serve; defaults to the corpus name.
+    # Vector collection to serve; defaults to the corpus's collection (CorpusSpec).
     collection: str | None = None
 
     generator_model: str = "gpt-4o-mini"
@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     route_by_document: bool = True
     routing_candidates: int = DEFAULT_ROUTING_CANDIDATES
     routing_second_document_ratio: float = DEFAULT_SECOND_DOCUMENT_RATIO
+    # BM25 + dense rank fusion inside the routed guideline(s); needs routing, so it never
+    # affects single-document corpora. On by default together with the public corpus's
+    # recommendation-aware chunks: eval correctness 3.92 -> 4.38, refusals unchanged
+    # (eval/summary_public_approach.md).
+    hybrid_retrieval: bool = True
     llm_timeout_s: float = 30.0
 
     # Unset: each corpus uses its own store (see corpora.CorpusSpec.default_chroma_dir), so a

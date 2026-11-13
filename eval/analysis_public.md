@@ -22,6 +22,7 @@ this file; it is edited by hand.
 | 1 | 2026-11-12 | RAG triad, retrieval hit rate, refusals | $0.44 |
 | 2 | 2026-11-12 | Answer correctness | $0.58 (+ $0.26 judge calibration on run-1 answers) |
 | 3 | 2026-11-12 | Guideline routing as a 4th config ([ADR 0005](../docs/adr/0005-guideline-routing.md)) | ≤ $1.21 |
+| 4 | 2026-11-12 | Recommendation-aware chunks + hybrid BM25/dense ([ADR 0006](../docs/adr/0006-recommendation-chunks-hybrid.md)); only the two RAG configs re-run, other rows reused from run 3 | ≤ $0.67 |
 
 Costs are rebuilt from token counts at list prices, not billed figures. Temperature 0 is not
 fully deterministic: 6 of 13 RAG answers were worded differently in run 2, but made the same
@@ -145,11 +146,47 @@ Remaining failures, diagnosed without an LLM:
 - **P09 (CKD) and P11 (low back pain) — MMR redundancy.** The needed recommendation-table chunks
   rank in the top 4–7 but are dropped as near-duplicates of an adjacent chunk at λ=0.7.
 
+## Run 4: recommendation-aware chunks + hybrid retrieval
+
+New collection `public_rec`: recommendation headings start a fresh chunk with no overlap,
+table rows are packed whole, and retrieval inside the routed guideline fuses BM25 and dense
+rankings before MMR. See [ADR 0006](../docs/adr/0006-recommendation-chunks-hybrid.md).
+Plain LLM, prompt-engineered and "no routing" rows are reused from run 3; only the two RAG
+configs below were re-run.
+
+| Config | Correctness (1–5) | Pass / partial / fail | Fact coverage | Refusals |
+|---|---|---|---|---|
+| RAG, guideline routing (`public`) | 3.92 | 8 / 3 / 2 | 0.85 | 3/3 |
+| RAG, rec chunks + hybrid (`public_rec`, production) | 4.38 | 10 / 2 / 1 | 0.88 | 3/3 |
+
+Per query (P07–P11):
+
+| Query | Routing only | Rec chunks + hybrid |
+|---|---|---|
+| P07 asthma | pass | pass |
+| P08 COPD | fail (triple therapy) | fail (triple therapy, from the p40 discussion) |
+| P09 CKD + SGLT2 | fail* | **pass** |
+| P10 headache | pass | pass |
+| P11 low back pain | partial (NSAIDs missed) | **pass** |
+
+\*Judge error: citing the diabetes guideline was flagged as a contradiction; run 3 graded the
+same kind of answer partial. Counting it as partial, routing-only would score about 4.08,
+still below 4.38.
+
+- Every query that passed under routing-only still passes. P06 and P13 are partial in both.
+- Answer relevance dipped slightly (5.00 → 4.77) on P05 (still a correctness pass) and P08.
+- **P08 remains:** isolating the Rec 8 table row removed "COPD" from its chunk text, so its
+  dense rank fell (23 → 149); BM25 alone does not recover it. Candidate fix: prefix chunks with
+  the guideline/section name before embedding.
+- Strict one-row-per-chunk splitting was tested and rejected (fewer facts in context at k=5).
+
 ## Follow-ups
 
-- **Retrieval:** ~~same-guideline filtering~~ done in run 3. Next: chunk boundaries aligned to
-  "Recommendation N." headings (P08, P09, P11), optionally with lexical (BM25) retrieval
-  inside the routed guideline.
+- **Retrieval:** ~~same-guideline filtering~~ (run 3) and ~~recommendation-aware chunks +
+  BM25 hybrid~~ (run 4) done. Next for P08: prefix chunks with the guideline/section name
+  before embedding.
+- **Overfitting risk:** runs 3–4 were tuned on the same 13 questions. Add new held-out
+  questions before further retrieval changes.
 - **Judge:** build a larger labelled set with held-out questions before changing the rubric
   again, and add a check that a quoted contradiction really conflicts with a specific expected
   fact (would catch the P06 run-2 error).

@@ -20,6 +20,20 @@ MANIFEST_DIR = Path(__file__).resolve().parent / "corpus_manifests"
 _FORBIDDEN_LABEL_CHARS = frozenset(",[]")
 # Inclusive (first, last) 1-based physical page numbers, the same numbering citations use.
 PageRange = tuple[int, int]
+# A numbered recommendation statement in VA/DoD guidelines, as a table row ("8." or a bare
+# "10" on its own line, then the statement). The keyword look-ahead (within 400 characters,
+# not crossing into the next numbered line) keeps out numbered lists that are not
+# recommendations: GRADE criteria, algorithm box descriptions, numeric table cells.
+_RECOMMENDATION_STATEMENT = (
+    r"\d{1,2}\.?[ \t]*(?:\n[ \t]*)?(?=[A-Z])"
+    r"(?=(?:(?!\n\d)[\s\S]){0,400}?"
+    r"\b(?:[Ww]e\s+(?:strongly\s+)?(?:recommend|suggest)|[Ii]nsufficient\s+evidence)\b)"
+)
+VA_DOD_RECOMMENDATION_ROW = r"^" + _RECOMMENDATION_STATEMENT
+# Discussion-section heading: a "Recommendation" line followed by the numbered statement.
+VA_DOD_RECOMMENDATION_HEADING = (
+    r"^Recommendations?[ \t]*\n[ \t]*(?=" + _RECOMMENDATION_STATEMENT + ")"
+)
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
 
 
@@ -67,6 +81,13 @@ class CorpusSpec:
     documents: tuple[CorpusDocument, ...]
     # Regexes for lines that are layout noise (running headers etc.), not content.
     noise_line_patterns: tuple[str, ...] = ()
+    # Structure-aware chunking (ingest only; multiline regexes, see split_text_structured):
+    # a section match always starts a new chunk; inside a section, chunks break only at item
+    # matches. Both None: plain 200-token splitting, as Merck has always used.
+    section_boundary_pattern: str | None = None
+    item_boundary_pattern: str | None = None
+    # Vector collection served and (re)built by default; empty means the corpus name.
+    collection: str = ""
 
     def __post_init__(self) -> None:
         if not self.documents:
@@ -78,6 +99,10 @@ class CorpusSpec:
         bad = [label for label in labels if _FORBIDDEN_LABEL_CHARS & set(label)]
         if self.is_multi_document and bad:
             raise ValueError(f"Citation labels must not contain , [ or ]: {bad}")
+
+    @property
+    def default_collection(self) -> str:
+        return self.collection or self.name
 
     @property
     def default_chroma_dir(self) -> Path:
@@ -184,6 +209,11 @@ def _public() -> CorpusSpec:
             rf"^(?:{_MONTHS}) \d{{4}}$",  # header publication date
             r"^Page \d+ of \d+$",
         ),
+        section_boundary_pattern=VA_DOD_RECOMMENDATION_HEADING,
+        item_boundary_pattern=VA_DOD_RECOMMENDATION_ROW,
+        # Recommendation-aware chunks. The older "public" collection (plain 200-token chunks)
+        # is kept only for the eval comparison and is no longer rebuilt by default.
+        collection="public_rec",
     )
 
 

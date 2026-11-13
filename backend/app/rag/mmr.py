@@ -10,14 +10,22 @@ def _normalize(vectors: NDArray[np.float64]) -> NDArray[np.float64]:
 
 
 def mmr_select(
-    query: NDArray[np.float64], candidates: NDArray[np.float64], k: int, lambda_mult: float
+    query: NDArray[np.float64],
+    candidates: NDArray[np.float64],
+    k: int,
+    lambda_mult: float,
+    relevance: NDArray[np.float64] | None = None,
 ) -> list[int]:
-    """Return indices of up to k candidates. lambda_mult=1 is pure relevance, 0 pure diversity."""
+    """Return indices of up to k candidates. lambda_mult=1 is pure relevance, 0 pure diversity.
+
+    relevance overrides the query-cosine relevance (hybrid retrieval passes fused scores);
+    redundancy is always cosine similarity between candidates.
+    """
     if len(candidates) == 0 or k <= 0:
         return []
-    q = _normalize(query)
     docs = _normalize(candidates)
-    relevance = docs @ q
+    if relevance is None:
+        relevance = docs @ _normalize(query)
     selected = [int(np.argmax(relevance))]
     remaining = [i for i in range(len(docs)) if i != selected[0]]
     while remaining and len(selected) < k:
