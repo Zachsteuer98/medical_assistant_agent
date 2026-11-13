@@ -19,7 +19,9 @@ questions from trusted reference manuals and cites the exact source page for eve
 - [x] Tests, Docker, CI (privacy guard, lint, tests, image builds on every push)
 - [x] Business findings deck ([PowerPoint](deck/Medical_Assistant_Agent_Findings.pptx))
 - [ ] Demo GIF and screenshots in this README
-- [ ] Deployment; decide whether a public-domain corpus powers the live demo ([ADR 0001](docs/adr/0001-corpus-licensing.md))
+- [x] Public demo corpus chosen: VA/DoD Clinical Practice Guidelines ([ADR 0004](docs/adr/0004-public-demo-corpus.md))
+- [ ] Public corpus ingest (multi-PDF) and eval run
+- [ ] Deployment with rate limiting and a spend cap
 
 ## Business findings
 
@@ -74,8 +76,8 @@ cd backend && uv run python -m evaluation.run --experiment chunk_size   # ~$1-2 
 ## Data & licensing
 
 The evaluated results use a personally licensed medical manual that is **not** included
-in this repository. The live demo uses a public-domain corpus. See
-[ADR 0001](docs/adr/0001-corpus-licensing.md).
+in this repository. The live demo will use VA/DoD Clinical Practice Guidelines (U.S. government publications). See
+[ADR 0001](docs/adr/0001-corpus-licensing.md) and [ADR 0004](docs/adr/0004-public-demo-corpus.md).
 
 ## Origin
 

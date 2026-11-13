@@ -5,7 +5,8 @@ Merck Manual. Its licence forbids sharing; any vector store built from it is der
 
 **Decision.** Support two corpora behind one ingest interface:
 - `merck` — local only, never committed or hosted. Used for the evaluation results in the deck.
-- `public` — a public-domain medical corpus that powers the live hosted demo.
+- `public` — an openly published medical corpus that powers the live hosted demo
+  (chosen in [ADR 0004](0004-public-demo-corpus.md): VA/DoD Clinical Practice Guidelines).
 
 PDFs, vector stores, and eval CSVs containing retrieved text are git-ignored.
 
