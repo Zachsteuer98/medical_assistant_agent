@@ -8,16 +8,29 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.clientip import client_ip
 from app.config import Settings, get_settings
 from app.corpora import CorpusSpec, get_corpus
 from app.rag.llm import LLMError, OpenAIChatModel
 from app.rag.routing import RoutingConfig
 from app.rag.service import AssistantService
 from app.rag.store import ChromaRetriever, IndexNotReadyError
-from app.ratelimit import RateLimiter
+from app.ratelimit import DailyLimiter, RateLimiter
 from app.schemas import AskRequest, AskResponse, HealthResponse
+from app.static import mount_frontend
 
 logger = logging.getLogger("medical_assistant")
+LOG_FORMAT = "%(asctime)s %(name)s %(message)s"
+
+
+def configure_logging() -> None:
+    """Emit the app's INFO events (ask_completed, client_chain) next to uvicorn's own logs.
+
+    uvicorn only configures its own loggers, so without a root handler every INFO event from the
+    app is silently dropped. A no-op when the host process already set logging up.
+    """
+    if not logging.getLogger().handlers:
+        logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 
 
 def routing_config(
@@ -58,8 +71,10 @@ def build_service(settings: Settings) -> AssistantService:
 def create_app(
     service: AssistantService | None = None, settings: Settings | None = None
 ) -> FastAPI:
+    configure_logging()
     settings = settings or get_settings()
     limiter = RateLimiter(settings.rate_limit_per_minute)
+    daily = DailyLimiter(settings.daily_question_limit)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -80,9 +95,22 @@ def create_app(
     ServiceDep = Annotated[AssistantService, Depends(get_service)]
 
     def rate_limited(request: Request) -> None:
-        client = request.client.host if request.client else "unknown"
+        peer = request.client.host if request.client else None
+        forwarded = request.headers.getlist("x-forwarded-for")
+        client = client_ip(peer, forwarded, settings.trusted_proxy_hops)
+        if settings.log_client_chain:
+            logger.info("client_chain peer=%s xff=%s resolved=%s", peer, forwarded, client)
         if not limiter.allow(client):
             raise HTTPException(status_code=429, detail="Too many requests. Try again in a minute.")
+
+    def daily_capped() -> None:
+        # Runs after rate_limited, so a per-minute rejection never spends the daily budget.
+        if not daily.allow():
+            raise HTTPException(
+                status_code=429,
+                detail="The daily demo limit has been reached. Please try again tomorrow.",
+                headers={"Retry-After": str(daily.seconds_until_reset())},
+            )
 
     @app.get("/api/health", response_model=HealthResponse)
     def health(svc: ServiceDep) -> HealthResponse:
@@ -90,7 +118,11 @@ def create_app(
             status="ok", corpus=svc.corpus_name, indexed_chunks=svc.indexed_chunks()
         )
 
-    @app.post("/api/ask", response_model=AskResponse, dependencies=[Depends(rate_limited)])
+    @app.post(
+        "/api/ask",
+        response_model=AskResponse,
+        dependencies=[Depends(rate_limited), Depends(daily_capped)],
+    )
     def ask(body: AskRequest, svc: ServiceDep) -> AskResponse:
         started = time.perf_counter()
         try:
@@ -112,4 +144,6 @@ def create_app(
         )
         return result
 
+    if settings.static_dir is not None and settings.static_dir.is_dir():
+        mount_frontend(app, settings.static_dir)  # last: /api routes must match first
     return app

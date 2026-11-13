@@ -29,7 +29,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health', timeout=4)"
 
 # The vector index is licensed-derived data: mounted at runtime, never baked in (ADR 0001).
-# --proxy-headers: per-client rate limiting sees the real IP behind nginx. Trusting all
-# forwarders is safe only because the API port is never published (compose uses `expose`).
+# --no-proxy-headers: the app derives the per-client rate-limit key itself from the end of
+# X-Forwarded-For that its own proxy appended (TRUSTED_PROXY_HOPS, default 1 = nginx in compose).
+# uvicorn's --forwarded-allow-ips "*" would trust the spoofable leftmost entry instead.
 CMD ["uvicorn", "app.main:create_app", "--factory", \
-     "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+     "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

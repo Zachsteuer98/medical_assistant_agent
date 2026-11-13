@@ -3,6 +3,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.rag.routing import DEFAULT_ROUTING_CANDIDATES, DEFAULT_SECOND_DOCUMENT_RATIO
@@ -45,8 +46,24 @@ class Settings(BaseSettings):
     chroma_dir: Path | None = None
     allowed_origins: list[str] = ["http://localhost:5173"]
     rate_limit_per_minute: int = 10
+    # Global cap on admitted /api/ask calls per UTC day, across all visitors (cost guard).
+    daily_question_limit: int = Field(100, gt=0)
+    # Number of reverse proxies in front of the API, each appending to X-Forwarded-For. The
+    # client is taken that many entries from the right end; 0 means no proxy (use the socket
+    # peer). Too low is safe (visitors share a bucket); too high would trust forgeable entries.
+    trusted_proxy_hops: int = Field(1, ge=0)
+    # Log the socket peer and X-Forwarded-For chain per ask, to verify trusted_proxy_hops.
+    log_client_chain: bool = False
+    # Built frontend to serve at / (optional). Unset or blank: API only.
+    static_dir: Path | None = None
     # Extra comma-separated regexes for corpus-specific noise lines.
     watermark_patterns: str = ""
+
+    @field_validator("static_dir", mode="before")
+    @classmethod
+    def _blank_static_dir_is_unset(cls, value: object) -> object:
+        # An empty STATIC_DIR= line would otherwise parse as Path("."), serving the cwd.
+        return None if isinstance(value, str) and not value.strip() else value
 
 
 @lru_cache
