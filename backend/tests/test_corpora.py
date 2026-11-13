@@ -123,7 +123,15 @@ def test_merck_has_no_excluded_pages():
 def test_is_content_page_respects_front_matter_and_inclusive_ranges():
     doc = CorpusDocument("A", Path("a.pdf"), 4, excluded_pages=((60, 98), (112, 123)))
     assert [doc.is_content_page(p) for p in (4, 5, 59, 60, 98, 99, 111, 112, 123)] == [
-        False, True, True, False, False, True, True, False, False,
+        False,
+        True,
+        True,
+        False,
+        False,
+        True,
+        True,
+        False,
+        False,
     ]
 
 
