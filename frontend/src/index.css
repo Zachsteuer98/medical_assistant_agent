@@ -91,6 +91,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .cite-chip:hover { background: var(--accent); color: var(--accent-text); }
 
 .notice { padding: 10px 14px; border-radius: var(--radius); background: var(--surface-2); }
+.error span { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
 .error { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--radius); background: var(--error-bg); color: var(--error-text); }
 .error button, .link { background: none; border: 1px solid currentColor; border-radius: 6px; padding: 4px 10px; color: inherit; }
 .link { margin-top: 10px; color: var(--accent); }

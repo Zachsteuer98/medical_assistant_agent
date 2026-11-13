@@ -77,6 +77,44 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: /show source page 2595/i })).toBeInTheDocument();
   });
 
+  describe("429 handling", () => {
+    const FALLBACK = /sending questions too quickly/i;
+    const DAILY = "The daily demo limit has been reached. Please try again tomorrow.";
+    const MINUTE = "Too many requests. Try again in a minute.";
+
+    async function askAndGetAlert(res: Response) {
+      mockApi([res]);
+      const user = userEvent.setup();
+      render(<App />);
+      await user.click(await screen.findByRole("button", { name: /pulmonary embolism/i }));
+    }
+
+    it("shows the daily-limit detail and hides Retry", async () => {
+      const res = new Response(JSON.stringify({ detail: DAILY }), { status: 429, headers: { "Retry-After": "43200" } });
+      await askAndGetAlert(res);
+      expect(await screen.findByText(DAILY)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    });
+
+    it("shows the per-minute detail and keeps Retry", async () => {
+      const res = new Response(JSON.stringify({ detail: MINUTE }), { status: 429, headers: { "Retry-After": "60" } });
+      await askAndGetAlert(res);
+      expect(await screen.findByText(MINUTE)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+    });
+
+    it.each([
+      ["an empty body", new Response(null, { status: 429 })],
+      ["invalid JSON", new Response("<html>nope", { status: 429 })],
+      ["a non-string detail", jsonResponse({ detail: [{ msg: "x" }] }, 429)],
+      ["a blank detail", jsonResponse({ detail: "  " }, 429)],
+    ])("falls back to the fixed text for %s", async (_name, res) => {
+      await askAndGetAlert(res);
+      expect(await screen.findByText(FALLBACK)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
+    });
+  });
+
   it("shows a not-found notice when the manual lacks the answer", async () => {
     mockApi([jsonResponse({ ...ANSWER, answered_from_context: false, citations: [] })]);
     const user = userEvent.setup();

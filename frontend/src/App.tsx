@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { askQuestion, getHealth } from "./api/client";
+import { ApiError, askQuestion, getHealth } from "./api/client";
 import { Answer } from "./components/Answer";
 import { Composer } from "./components/Composer";
 import { EmptyState } from "./components/EmptyState";
@@ -32,7 +32,10 @@ export default function App() {
       setHealth({ state: "ok", corpus: response.corpus });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Something went wrong.";
-      setTurns((ts) => ts.map((t) => (t.id === id ? { id, question, status: "error", error: message } : t)));
+      const retryable = error instanceof ApiError ? error.retryable : true;
+      setTurns((ts) =>
+        ts.map((t) => (t.id === id ? { id, question, status: "error", error: message, retryable } : t)),
+      );
     }
   }, []);
 
@@ -104,9 +107,11 @@ export default function App() {
                 {turn.status === "error" && (
                   <div className="error" role="alert">
                     <span>{turn.error}</span>
-                    <button type="button" onClick={() => retry(turn)}>
-                      Retry
-                    </button>
+                    {turn.retryable && (
+                      <button type="button" onClick={() => retry(turn)}>
+                        Retry
+                      </button>
+                    )}
                   </div>
                 )}
                 {turn.status === "done" && (

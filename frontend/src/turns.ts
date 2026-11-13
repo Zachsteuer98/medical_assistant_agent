@@ -4,4 +4,4 @@ import type { AskResponse } from "./api/types";
 export type Turn =
   | { id: number; question: string; status: "loading" }
   | { id: number; question: string; status: "done"; response: AskResponse }
-  | { id: number; question: string; status: "error"; error: string };
+  | { id: number; question: string; status: "error"; error: string; retryable: boolean };
