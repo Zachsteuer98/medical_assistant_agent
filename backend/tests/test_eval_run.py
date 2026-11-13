@@ -76,10 +76,17 @@ def test_merck_experiments_still_use_merck_corpus_and_queries():
 def test_public_experiment_compares_same_approaches_on_public_corpus():
     public, merck = EXPERIMENTS["public_approach"], EXPERIMENTS["approach"]
     assert experiment_corpus(public) == "public"
-    assert [(c.name, c.mode, c.k, c.chunk_tokens) for c in public] == [
-        (c.name, c.mode, c.k, c.chunk_tokens) for c in merck
+    *unrouted, routed = public
+    assert [(c.mode, c.k, c.chunk_tokens, c.route) for c in unrouted] == [
+        (c.mode, c.k, c.chunk_tokens, False) for c in merck
     ]
+    assert (routed.mode, routed.k, routed.chunk_tokens, routed.route) == ("rag", 5, 200, True)
+    assert "production" in routed.name and "production" not in unrouted[-1].name
     assert {c.collection for c in public} == {"public"}
+
+
+def test_merck_experiments_never_route():
+    assert not any(c.route for name in ("chunk_size", "approach") for c in EXPERIMENTS[name])
 
 
 def test_experiment_spanning_two_corpora_is_rejected():

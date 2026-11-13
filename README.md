@@ -31,7 +31,7 @@ questions from trusted reference manuals and cites the exact source page for eve
 ## Architecture
 
 ```
-React (Vite, TS) ──/api/ask──▶ FastAPI ──▶ Chroma (MiniLM embeddings, MMR)
+React (Vite, TS) ──/api/ask──▶ FastAPI ──▶ Chroma (MiniLM embeddings, guideline routing + MMR)
    citation chips  ◀── answer + citations ──┘      └──▶ gpt-4o-mini (temp 0)
 ```
 

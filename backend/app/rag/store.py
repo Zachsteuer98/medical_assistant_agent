@@ -14,6 +14,7 @@ from chromadb.config import Settings as ChromaSettings
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 
 from app.rag.mmr import mmr_select
+from app.rag.routing import RoutingConfig, route_documents
 
 ADD_BATCH_SIZE = 256
 CHROMA_DB_FILE = "chroma.sqlite3"
@@ -106,7 +107,14 @@ def build_index(
 
 
 class ChromaRetriever:
-    def __init__(self, chroma_dir: Path, collection: str, fetch_k: int, mmr_lambda: float):
+    def __init__(
+        self,
+        chroma_dir: Path,
+        collection: str,
+        fetch_k: int,
+        mmr_lambda: float,
+        routing: RoutingConfig | None = None,
+    ):
         self._embed = DefaultEmbeddingFunction()
         try:
             self._col = _client(chroma_dir).get_collection(
@@ -119,16 +127,55 @@ class ChromaRetriever:
             ) from exc
         self._fetch_k = fetch_k
         self._mmr_lambda = mmr_lambda
+        # None: plain MMR over the whole collection (single-document corpora, routing off).
+        self._routing = routing
 
     def count(self) -> int:
         return self._col.count()
 
     def retrieve(self, question: str, k: int) -> list[Chunk]:
+        if self._routing is not None:
+            return self._retrieve_routed(question, k, self._routing)
         result = self._col.query(
             query_texts=[question],
             n_results=self._fetch_k,
             include=["documents", "metadatas", "embeddings"],
         )
+        query_vec = np.asarray(self._embed([question])[0], dtype=np.float64)
+        return self._select(result, query_vec, k)
+
+    def _retrieve_routed(self, question: str, k: int, routing: RoutingConfig) -> list[Chunk]:
+        # Embed once: the query embedding dominates retrieval latency on CPU (~0.3 s).
+        query_vec = np.asarray(self._embed([question])[0], dtype=np.float64)
+        where = self._route(query_vec, routing)
+        filters = {"where": where} if where else {}
+        result = self._col.query(
+            query_embeddings=[query_vec],
+            n_results=self._fetch_k,
+            include=["documents", "metadatas", "embeddings"],
+            **filters,
+        )
+        return self._select(result, query_vec, k)
+
+    def _route(self, query_vec: np.ndarray, routing: RoutingConfig) -> dict | None:
+        """Chroma filter restricting retrieval to the routed document(s); None if no-op."""
+        result = self._col.query(
+            query_embeddings=[query_vec],
+            n_results=routing.candidates,
+            include=["metadatas", "distances"],
+        )
+        sources = [str(m.get("source", "")) for m in result["metadatas"][0]]
+        if not any(sources):  # index built before multi-document support: nothing to route
+            return None
+        similarities = [1.0 - d for d in result["distances"][0]]  # cosine space
+        documents = route_documents(sources, similarities, routing.second_document_ratio)
+        log.debug("routed to documents=%s", documents)
+        if len(documents) == 1:
+            return {"source": documents[0]}
+        return {"source": {"$in": documents}}
+
+    def _select(self, result: Any, query_vec: np.ndarray, k: int) -> list[Chunk]:
+        """MMR over a Chroma query result."""
         docs, metas = result["documents"][0], result["metadatas"][0]
         vectors = np.asarray(result["embeddings"][0], dtype=np.float64)
 
@@ -138,6 +185,5 @@ class ChromaRetriever:
         if not unique:
             return []
 
-        query_vec = np.asarray(self._embed([question])[0], dtype=np.float64)
         picked = mmr_select(query_vec, vectors[unique], k, self._mmr_lambda)
         return [chunk_from_record(docs[unique[i]], metas[unique[i]]) for i in picked]

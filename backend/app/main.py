@@ -9,14 +9,28 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings, get_settings
-from app.corpora import get_corpus
+from app.corpora import CorpusSpec, get_corpus
 from app.rag.llm import LLMError, OpenAIChatModel
+from app.rag.routing import RoutingConfig
 from app.rag.service import AssistantService
 from app.rag.store import ChromaRetriever, IndexNotReadyError
 from app.ratelimit import RateLimiter
 from app.schemas import AskRequest, AskResponse, HealthResponse
 
 logger = logging.getLogger("medical_assistant")
+
+
+def routing_config(
+    settings: Settings, corpus: CorpusSpec, enabled: bool | None = None
+) -> RoutingConfig | None:
+    """Routing for multi-document corpora; None (plain MMR) for single-document ones.
+
+    enabled overrides settings.route_by_document (evaluation compares both).
+    """
+    on = settings.route_by_document if enabled is None else enabled
+    if not on or not corpus.is_multi_document:
+        return None
+    return RoutingConfig(settings.routing_candidates, settings.routing_second_document_ratio)
 
 
 def build_service(settings: Settings) -> AssistantService:
@@ -26,6 +40,7 @@ def build_service(settings: Settings) -> AssistantService:
         settings.collection or corpus.name,
         settings.fetch_k,
         settings.mmr_lambda,
+        routing_config(settings, corpus),
     )
     llm = OpenAIChatModel(
         api_key=settings.openai_api_key,

@@ -21,6 +21,7 @@ this file; it is edited by hand.
 |---|---|---|---|
 | 1 | 2026-11-12 | RAG triad, retrieval hit rate, refusals | $0.44 |
 | 2 | 2026-11-12 | Answer correctness | $0.58 (+ $0.26 judge calibration on run-1 answers) |
+| 3 | 2026-11-12 | Guideline routing as a 4th config ([ADR 0005](../docs/adr/0005-guideline-routing.md)) | ≤ $1.21 |
 
 Costs are rebuilt from token counts at list prices, not billed figures. Temperature 0 is not
 fully deterministic: 6 of 13 RAG answers were worded differently in run 2, but made the same
@@ -116,10 +117,39 @@ recommendations, e.g. HbA1c <7% instead of the 7.0–8.5% range, an ARB or beta-
 of spironolactone/amiloride, or suggesting acetaminophen or benzodiazepines where the
 guidelines advise against them.
 
+## Run 3: guideline routing
+
+Routing scores each guideline over the top 20 candidates and runs MMR only within the top
+guideline (plus the runner-up if it scores ≥ 0.5 × the top). See
+[ADR 0005](../docs/adr/0005-guideline-routing.md).
+
+| Config | Correctness (1–5) | Pass / partial / fail | Fact coverage | Page hit | Refusals |
+|---|---|---|---|---|---|
+| RAG, no routing | 3.77 | 7 / 4 / 2 | 0.80 | 12/13 | 3/3 |
+| RAG, guideline routing (production) | 4.08 | 8 / 4 / 1 | 0.85 | 13/13 | 3/3 |
+
+- The unrouted score moved from 3.62 (run 2) to 3.77 only because the P06 false contradiction
+  did not recur — judge noise.
+- Per query, routing changed only **P07** (fail → pass; the COPD warning no longer leaks in) and
+  **P11** (coverage 0.67 → 0.83; opioids, benzodiazepines and corticosteroids now covered,
+  NSAIDs still missing). Nothing that passed now fails.
+- Retrieval got faster (664 → 350 ms per query) because the question is embedded once.
+- Small effect on n=13 in one run: one question flipped, one improved.
+
+Remaining failures, diagnosed without an LLM:
+
+- **P08 (COPD) — chunking.** The Rec 8 discussion statement shares a chunk with the tail of the
+  Rec 7 discussion and ranks #225 within COPD; the clean recommendation-table chunk ranks #23,
+  outside the candidate pool. The exacerbation sidebar ranks #1 and drives the wrong answer.
+  A quick BM25 test ranks the Rec 8 chunk #1.
+- **P09 (CKD) and P11 (low back pain) — MMR redundancy.** The needed recommendation-table chunks
+  rank in the top 4–7 but are dropped as near-duplicates of an adjacent chunk at λ=0.7.
+
 ## Follow-ups
 
-- **Retrieval:** try same-guideline filtering or reranking to stop cross-guideline leakage and
-  missed recommendations (P07, P08).
+- **Retrieval:** ~~same-guideline filtering~~ done in run 3. Next: chunk boundaries aligned to
+  "Recommendation N." headings (P08, P09, P11), optionally with lexical (BM25) retrieval
+  inside the routed guideline.
 - **Judge:** build a larger labelled set with held-out questions before changing the rubric
   again, and add a check that a quoted contradiction really conflicts with a specific expected
   fact (would catch the P06 run-2 error).

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.rag.routing import DEFAULT_ROUTING_CANDIDATES, DEFAULT_SECOND_DOCUMENT_RATIO
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -25,6 +27,12 @@ class Settings(BaseSettings):
     top_k: int = 5
     fetch_k: int = 20
     mmr_lambda: float = 0.7
+    # Guideline routing for multi-document corpora; single-document corpora (Merck) ignore it.
+    # On by default: public eval correctness 3.77 -> 4.08 with refusals unchanged
+    # (eval/summary_public_approach.md).
+    route_by_document: bool = True
+    routing_candidates: int = DEFAULT_ROUTING_CANDIDATES
+    routing_second_document_ratio: float = DEFAULT_SECOND_DOCUMENT_RATIO
     llm_timeout_s: float = 30.0
 
     # Unset: each corpus uses its own store (see corpora.CorpusSpec.default_chroma_dir), so a

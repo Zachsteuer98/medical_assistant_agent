@@ -23,6 +23,7 @@ from openai import OpenAI
 
 from app.config import REPO_ROOT, get_settings
 from app.corpora import CorpusSpec, get_corpus
+from app.main import routing_config
 from app.rag.llm import ChatModel, OpenAIChatModel
 from app.rag.prompts import FALLBACK_ANSWER
 from app.rag.service import AssistantService
@@ -54,6 +55,9 @@ class RunConfig:
     k: int
     mode: Mode = "rag"
     corpus: str = "merck"
+    # Guideline routing (multi-document corpora only); set explicitly so a run never depends
+    # on the ROUTE_BY_DOCUMENT environment setting.
+    route: bool = False
 
 
 @dataclass(frozen=True)
@@ -85,11 +89,21 @@ EXPERIMENTS: dict[str, tuple[RunConfig, ...]] = {
         RunConfig("Prompt-engineered LLM", "merck", 200, 5, mode="prompted"),
         RunConfig("RAG (production)", "merck", 200, 5, mode="rag"),
     ),
-    # Same three approaches on the hosted demo's corpus, at its production config.
+    # Same three approaches on the hosted demo's corpus, plus RAG without guideline routing
+    # (the production retriever before routing) to keep the comparison visible.
     "public_approach": (
         RunConfig("Plain LLM", "public", 200, 5, mode="plain_llm", corpus="public"),
         RunConfig("Prompt-engineered LLM", "public", 200, 5, mode="prompted", corpus="public"),
-        RunConfig("RAG (production)", "public", 200, 5, mode="rag", corpus="public"),
+        RunConfig("RAG (no routing)", "public", 200, 5, mode="rag", corpus="public"),
+        RunConfig(
+            "RAG (production, guideline routing)",
+            "public",
+            200,
+            5,
+            mode="rag",
+            corpus="public",
+            route=True,
+        ),
     ),
 }
 
@@ -401,6 +415,7 @@ def main() -> None:
             cfg.collection,
             cfg.k * FETCH_K_MULTIPLIER,
             settings.mmr_lambda,
+            routing_config(settings, corpus, cfg.route),
         )
         svc = AssistantService(retriever, llm, corpus, cfg.k)
         jobs += [Job(cfg, svc, retriever, llm, q, corpus, labelled) for q in queries]
