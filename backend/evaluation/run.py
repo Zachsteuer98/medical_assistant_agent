@@ -1,6 +1,9 @@
 """Run an evaluation experiment.
 
     uv run python -m evaluation.run --experiment chunk_size
+    uv run python -m evaluation.run --experiment public_approach
+
+Each experiment runs on one corpus; the corpus selects the query set (QUERY_SETS).
 
 Writes full rows (incl. retrieved licensed text) to eval/results/ (git-ignored) and
 numbers-only summaries + charts to eval/ (safe to commit).
@@ -19,13 +22,14 @@ from typing import Literal
 from openai import OpenAI
 
 from app.config import REPO_ROOT, get_settings
-from app.corpora import get_corpus
+from app.corpora import CorpusSpec, get_corpus
 from app.rag.llm import ChatModel, OpenAIChatModel
 from app.rag.prompts import FALLBACK_ANSWER
 from app.rag.service import AssistantService
 from app.rag.store import ChromaRetriever
 from evaluation.baselines import NOTEBOOK_SYSTEM_PROMPT
 from evaluation.judge import METRICS, Judge
+from evaluation.public_queries import PUBLIC_QUERIES
 from evaluation.queries import QUERIES, EvalQuery
 
 JUDGE_MODEL = "gpt-4o"
@@ -34,6 +38,7 @@ FETCH_K_MULTIPLIER = 4  # MMR candidate pool size relative to k
 EVAL_DIR = REPO_ROOT / "eval"
 log = logging.getLogger("eval")
 NOT_APPLICABLE = "n/a"
+QUERY_SETS: dict[str, tuple[EvalQuery, ...]] = {"merck": QUERIES, "public": PUBLIC_QUERIES}
 
 # rag: production pipeline. plain_llm / prompted: answer without retrieval; manual excerpts are
 # still retrieved, but only so the judge can check traceability to the trusted source.
@@ -48,6 +53,7 @@ class RunConfig:
     chunk_tokens: int
     k: int
     mode: Mode = "rag"
+    corpus: str = "merck"
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,9 @@ class Job:
     retriever: ChromaRetriever
     llm: ChatModel
     query: EvalQuery
+    corpus: CorpusSpec
+    # True when the query set carries retrieval ground truth; adds hit columns to the rows.
+    track_retrieval: bool = False
 
 
 def metrics_for(cfg: RunConfig) -> tuple[str, ...]:
@@ -75,7 +84,41 @@ EXPERIMENTS: dict[str, tuple[RunConfig, ...]] = {
         RunConfig("Prompt-engineered LLM", "merck", 200, 5, mode="prompted"),
         RunConfig("RAG (production)", "merck", 200, 5, mode="rag"),
     ),
+    # Same three approaches on the hosted demo's corpus, at its production config.
+    "public_approach": (
+        RunConfig("Plain LLM", "public", 200, 5, mode="plain_llm", corpus="public"),
+        RunConfig("Prompt-engineered LLM", "public", 200, 5, mode="prompted", corpus="public"),
+        RunConfig("RAG (production)", "public", 200, 5, mode="rag", corpus="public"),
+    ),
 }
+
+# Caveats printed under the summary table so they survive re-runs.
+EXPERIMENT_NOTES: dict[str, str] = {
+    "public_approach": (
+        "Corpus: 10 VA/DoD Clinical Practice Guidelines (`public`). These numbers are not "
+        "directly comparable to the Merck results (summary_approach.md): different corpus, "
+        "different query set, and narrower guideline-specific questions. Retrieval hit rates "
+        "count RAG answers whose top-k context contains the expected guideline (guideline hit) "
+        "or a chunk from that guideline's expected recommendation/discussion pages (page hit)."
+    ),
+}
+
+
+def experiment_corpus(configs: tuple[RunConfig, ...]) -> str:
+    corpora = {cfg.corpus for cfg in configs}
+    if len(corpora) != 1:
+        raise ValueError(f"An experiment must use exactly one corpus; got {sorted(corpora)}")
+    return corpora.pop()
+
+
+def has_retrieval_labels(queries: tuple[EvalQuery, ...]) -> bool:
+    return any(q.has_retrieval_labels for q in queries)
+
+
+def retrieval_hits(query: EvalQuery, retrieved: list[tuple[str, int]]) -> tuple[bool, bool]:
+    """(guideline hit, page hit) for retrieved (citation label, page) pairs."""
+    from_source = [page for label, page in retrieved if label == query.expected_source]
+    return bool(from_source), any(page in query.expected_pages for page in from_source)
 
 
 def answer(job: Job) -> tuple[str, list, float]:
@@ -110,6 +153,8 @@ def run_one(job: Job, judge: Judge) -> dict:
         "answer": text,
         "context": context,
     }
+    if job.track_retrieval:
+        row.update(retrieval_columns(job, chunks))
     for metric in METRICS:
         if metric in metrics_for(cfg):
             verdict = judge.rate(metric, q.question, context, text)
@@ -120,7 +165,30 @@ def run_one(job: Job, judge: Judge) -> dict:
     return row
 
 
-def summarize(rows: list[dict], configs: tuple[RunConfig, ...]) -> list[dict]:
+def retrieval_columns(job: Job, chunks: list) -> dict:
+    q = job.query
+    retrieved = [(job.corpus.document_named(c.source).label, c.page) for c in chunks]
+    row = {
+        "expected_source": q.expected_source,
+        "expected_pages": " ".join(map(str, q.expected_pages)),
+        "retrieved_sources": " | ".join(f"{label} p{page}" for label, page in retrieved),
+        "guideline_hit": None,
+        "page_hit": None,
+    }
+    # Hits only mean something where retrieval fed the answer and ground truth exists.
+    if job.cfg.mode == "rag" and q.has_retrieval_labels:
+        row["guideline_hit"], row["page_hit"] = retrieval_hits(q, retrieved)
+    return row
+
+
+def _hit_rate(rows: list[dict], column: str) -> str:
+    scored = [r[column] for r in rows if r[column] is not None]
+    return f"{sum(scored)}/{len(scored)}" if scored else NOT_APPLICABLE
+
+
+def summarize(
+    rows: list[dict], configs: tuple[RunConfig, ...], track_retrieval: bool = False
+) -> list[dict]:
     summary = []
     for cfg in configs:
         cfg_rows = [r for r in rows if r["config"] == cfg.name]
@@ -136,12 +204,23 @@ def summarize(rows: list[dict], configs: tuple[RunConfig, ...]) -> list[dict]:
         entry["correct_refusals"] = (
             f"{sum(not r['answered_from_context'] for r in out_of_scope)}/{len(out_of_scope)}"
         )
+        if track_retrieval:
+            entry["guideline_hit_rate"] = _hit_rate(answerable, "guideline_hit")
+            entry["page_hit_rate"] = _hit_rate(answerable, "page_hit")
+            entry["unwarranted_refusals"] = (
+                f"{sum(not r['answered_from_context'] for r in answerable)}/{len(answerable)}"
+            )
         entry["mean_latency_s"] = round(statistics.mean(r["latency_s"] for r in cfg_rows), 1)
         summary.append(entry)
     return summary
 
 
-def write_outputs(experiment: str, rows: list[dict], summary: list[dict]) -> None:
+def write_outputs(
+    experiment: str,
+    rows: list[dict],
+    summary: list[dict],
+    queries: tuple[EvalQuery, ...] = QUERIES,
+) -> None:
     (EVAL_DIR / "results").mkdir(parents=True, exist_ok=True)
     (EVAL_DIR / "charts").mkdir(parents=True, exist_ok=True)
     with open(EVAL_DIR / "results" / f"{experiment}.csv", "w", newline="") as f:
@@ -154,17 +233,38 @@ def write_outputs(experiment: str, rows: list[dict], summary: list[dict]) -> Non
     header = list(summary[0])
     lines += ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     lines += ["| " + " | ".join(str(s[h]) for h in header) + " |" for s in summary]
+    if experiment in EXPERIMENT_NOTES:
+        lines += ["", EXPERIMENT_NOTES[experiment]]
     lines += ["", "## Per-query scores (context_relevance / groundedness / answer_relevance)", ""]
-    configs = [s["config"] for s in summary]
-    lines += ["| query | " + " | ".join(configs) + " |", "|" + "---|" * (len(configs) + 1)]
-    for q in QUERIES:
-        cells = []
-        for c in configs:
-            r = next(r for r in rows if r["config"] == c and r["query_id"] == q.id)
-            cells.append("/".join("–" if r[m] is None else str(r[m]) for m in METRICS))
-        lines.append(f"| {q.id} {q.category} | " + " | ".join(cells) + " |")
+    lines += per_query_table(rows, [s["config"] for s in summary], queries)
     (EVAL_DIR / f"summary_{experiment}.md").write_text("\n".join(lines) + "\n")
     plot_summary(summary, EVAL_DIR / "charts" / f"{experiment}.png")
+
+
+def per_query_table(
+    rows: list[dict], configs: list[str], queries: tuple[EvalQuery, ...]
+) -> list[str]:
+    tracked = has_retrieval_labels(queries)
+    extra = ["RAG retrieval hit (guideline/page)"] if tracked else []
+    columns = ["query", *configs, *extra]
+    lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
+    for q in queries:
+        q_rows = {r["config"]: r for r in rows if r["query_id"] == q.id}
+        cells = [
+            "/".join("–" if q_rows[c][m] is None else str(q_rows[c][m]) for m in METRICS)
+            for c in configs
+        ]
+        if tracked:
+            cells.append(_hit_cell([q_rows[c] for c in configs]))
+        lines.append(f"| {q.id} {q.category} | " + " | ".join(cells) + " |")
+    return lines
+
+
+def _hit_cell(q_rows: list[dict]) -> str:
+    scored = [r for r in q_rows if r["guideline_hit"] is not None]
+    if not scored:
+        return "–"
+    return "/".join("yes" if scored[0][h] else "no" for h in ("guideline_hit", "page_hit"))
 
 
 def plot_summary(summary: list[dict], path: Path) -> None:
@@ -204,8 +304,11 @@ def main() -> None:
     args = parser.parse_args()
 
     settings = get_settings()
-    corpus = get_corpus(settings.corpus)
     configs = EXPERIMENTS[args.experiment]
+    corpus_name = experiment_corpus(configs)
+    corpus = get_corpus(corpus_name)
+    queries = QUERY_SETS[corpus_name]
+    track_retrieval = has_retrieval_labels(queries)
     llm = OpenAIChatModel(
         settings.openai_api_key,
         settings.openai_base_url,
@@ -227,13 +330,13 @@ def main() -> None:
             settings.mmr_lambda,
         )
         svc = AssistantService(retriever, llm, corpus, cfg.k)
-        jobs += [Job(cfg, svc, retriever, llm, q) for q in QUERIES]
+        jobs += [Job(cfg, svc, retriever, llm, q, corpus, track_retrieval) for q in queries]
 
     log.info("running %d answers, judged by %s", len(jobs), JUDGE_MODEL)
     with ThreadPoolExecutor(WORKERS) as pool:
         rows = list(pool.map(lambda job: run_one(job, judge), jobs))
-    summary = summarize(rows, configs)
-    write_outputs(args.experiment, rows, summary)
+    summary = summarize(rows, configs, track_retrieval)
+    write_outputs(args.experiment, rows, summary, queries)
     for s in summary:
         log.info("summary %s", s)
 

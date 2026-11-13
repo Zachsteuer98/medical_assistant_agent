@@ -10,6 +10,15 @@ class EvalQuery:
     category: str
     question: str
     answerable: bool = True
+    # Retrieval ground truth (optional): citation label of the document that answers the
+    # question, and the 1-based pages where the answer is stated (recommendation table and
+    # its discussion). Unlabelled query sets (Merck) leave these empty.
+    expected_source: str = ""
+    expected_pages: tuple[int, ...] = ()
+
+    @property
+    def has_retrieval_labels(self) -> bool:
+        return bool(self.expected_source)
 
 
 QUERIES: tuple[EvalQuery, ...] = (
