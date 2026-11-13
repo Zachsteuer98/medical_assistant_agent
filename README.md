@@ -78,6 +78,35 @@ docker compose up --build                         # http://localhost:8080
 The index must already exist on the host. Compose mounts `CHROMA_HOST_DIR` (default
 `./data/chroma_public`). For Merck, set `CORPUS=merck` and `CHROMA_HOST_DIR=./data/chroma` in `.env`.
 
+## Deploy (Hugging Face Spaces)
+
+Design and costs: [ADR 0007](docs/adr/0007-hosting-huggingface-spaces.md). You need a Hugging
+Face account with a PRO plan (Docker Spaces require a paid plan), a write token, and a
+**separate OpenAI key with a monthly limit** used only by the Space.
+
+```bash
+# 1. Build the bundle in build/space, including a fresh public index (~10 min on CPU)
+cd backend && uv run python ../deploy/huggingface/stage.py --build-index && cd ..
+
+# 2. Create the Space (public) and upload the bundle; add --dry-run to preview
+HF_TOKEN=... uv run --no-project --with huggingface_hub==2.3.0 \
+  python deploy/huggingface/publish.py --repo YOUR_USER/medical-assistant-agent
+```
+
+Then, in the Space settings:
+- **Secrets:** `OPENAI_API_KEY` (the dedicated, capped key).
+- **Variables (optional):** `DAILY_QUESTION_LIMIT` (default 100 questions per UTC day, all
+  visitors), `TRUSTED_PROXY_HOPS` (default 1), `LOG_CLIENT_CHAIN=true` for the check below.
+- **Hardware:** the free CPU tier sleeps after 48 hours without visitors; choose an upgraded
+  hardware tier to keep it always on.
+
+After the first deploy, verify the proxy hop count: with `LOG_CLIENT_CHAIN=true`, send one
+question and read the `client_chain peer=... xff=[...] resolved=...` log line. `resolved` must be
+your real public IP (compare `curl ifconfig.me`), and a request with a forged
+`X-Forwarded-For: 1.2.3.4` header must still resolve to your real IP. If it resolves to a
+Hugging Face address, raise `TRUSTED_PROXY_HOPS`; if it shows the forged value, lower it. Then
+set `LOG_CLIENT_CHAIN` back to false (it logs visitor IPs).
+
 ## Test
 
 ```bash

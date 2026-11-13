@@ -93,5 +93,14 @@ jobs:
           push: false
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,mode=max,scope=frontend
+      - name: Stage Hugging Face Space bundle (placeholder index)
+        run: python3 deploy/huggingface/stage.py --empty-index
+      - name: Build Hugging Face Space image
+        uses: docker/build-push-action@v6
+        with:
+          context: build/space
+          push: false
+          cache-from: type=gha,scope=space
+          cache-to: type=gha,mode=max,scope=space
       - name: Validate compose file
         run: touch .env && docker compose config --quiet
