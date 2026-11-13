@@ -102,7 +102,14 @@ def test_build_service_enables_hybrid_only_for_multi_document_corpora(
             captured.update(routing=args[4], hybrid=kwargs["hybrid"])
 
     monkeypatch.setattr(main, "ChromaRetriever", Recorder)
-    main.build_service(Settings(corpus=corpus, route_by_document=True, hybrid_retrieval=True))
+    main.build_service(
+        Settings(
+            corpus=corpus,
+            openai_api_key="test-key",
+            route_by_document=True,
+            hybrid_retrieval=True,
+        )
+    )
     assert captured["hybrid"] is expected
     assert (captured["routing"] is not None) is expected
 
@@ -124,7 +131,7 @@ def test_build_service_serves_the_corpus_default_collection(
             captured["collection"] = args[1]
 
     monkeypatch.setattr(main, "ChromaRetriever", Recorder)
-    main.build_service(Settings(corpus=corpus, collection=None))
+    main.build_service(Settings(corpus=corpus, openai_api_key="test-key", collection=None))
     assert captured["collection"] == collection
-    main.build_service(Settings(corpus=corpus, collection="override"))
+    main.build_service(Settings(corpus=corpus, openai_api_key="test-key", collection="override"))
     assert captured["collection"] == "override"
